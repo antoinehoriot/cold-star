@@ -14,7 +14,7 @@ pub struct PowerConsumer {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PowerOutcome {
-    pub r#gen: f64,
+    pub generation: f64,
     pub fuel_burned: f64,
     pub new_charge: f64,
     pub paused: BTreeSet<Consumer>,
@@ -39,12 +39,12 @@ pub fn resolve_power(
         max_output
     };
     let headroom = (capacity - charge).max(0.0);
-    let r#gen = max_output
+    let generation = max_output
         .min(fuel_limited)
         .min(desired_draw + headroom)
         .max(0.0);
 
-    let budget = r#gen + charge;
+    let budget = generation + charge;
 
     // Walk in priority order; once one consumer doesn't fit, it and all lower
     // priority consumers pause.
@@ -60,11 +60,11 @@ pub fn resolve_power(
         }
     }
 
-    let new_charge = (charge + r#gen - active_draw).clamp(0.0, capacity);
-    let fuel_burned = r#gen * fuel_per_output;
+    let new_charge = (charge + generation - active_draw).clamp(0.0, capacity);
+    let fuel_burned = generation * fuel_per_output;
 
     PowerOutcome {
-        r#gen,
+        generation,
         fuel_burned,
         new_charge,
         paused,
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn no_fuel_means_no_generation() {
         let out = resolve_power(&[c(JobId::Refiner, 4.0)], 5.0, 0.0, 100.0, 0.0, 0.5);
-        assert_eq!(out.r#gen, 0.0);
+        assert_eq!(out.generation, 0.0);
         // budget 0 -> everything pauses.
         assert!(out.paused.contains(&Consumer::Job(JobId::Refiner)));
     }
