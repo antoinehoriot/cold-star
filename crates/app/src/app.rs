@@ -1,6 +1,5 @@
 use dioxus::prelude::*;
 use sim::Tuning;
-use sim::state::GameState;
 
 const CSS: &str = "
 :root { color-scheme: dark; }
@@ -26,7 +25,7 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 #[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
-    let mut state = use_signal(|| GameState::new(&tuning.read(), 1));
+    let mut state = use_signal(|| crate::persist::load_initial(&tuning.read()));
 
     crate::tick::use_tick_driver(state, tuning, 1000.0, 8 * 60 * 60);
 
@@ -51,7 +50,11 @@ pub fn App() -> Element {
                 },
                 "Stoke the core"
             }
-            button { class: "act ghost", "Copy save link" }
+            button {
+                class: "act ghost",
+                onclick: move |_| crate::persist::copy_link(&state.read()),
+                "Copy save link"
+            }
         }
     }
 }
