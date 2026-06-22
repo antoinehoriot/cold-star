@@ -1,5 +1,16 @@
 (
+    reactor_capacity: 100.0,
     reactor_drain_per_tick: 1.0,
     reactor_stoke_amount: 10.0,
-    reactor_capacity: 100.0,
+    reactor_establish_threshold_frac: 0.5,
+    reactor_failing_threshold_frac: 0.2,
+    reactor_ignition_seed: 10.0,
+    feed_cost_scrap: 10.0,
+    feed_charge: 20.0,
+    salvage_yield: 5.0,
+    crew_source_cost: 30.0,
+    crew_cap: 4,
+    arrival_interval: 30,
+    crew_trickle: 0.5,
+    log_capacity: 100,
 )

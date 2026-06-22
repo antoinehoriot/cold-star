@@ -63,6 +63,7 @@ mod tests {
             reactor_drain_per_tick: 1.0,
             reactor_stoke_amount: 10.0,
             reactor_capacity: 100.0,
+            ..Tuning::default()
         }
     }
 
