@@ -67,4 +67,12 @@ mod tests {
             assert!((0.0..1.0).contains(&f), "f64 out of range: {f}");
         }
     }
+
+    #[test]
+    fn known_splitmix64_output_for_seed_zero() {
+        // Pins the canonical splitmix64 first output for seed 0, guarding against
+        // an accidental constant/shift typo that the relative tests wouldn't catch.
+        let mut r = Rng::new(0);
+        assert_eq!(r.next_u64(), 0xe220a8397b1dcdaf);
+    }
 }

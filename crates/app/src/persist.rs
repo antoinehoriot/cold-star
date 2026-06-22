@@ -45,6 +45,8 @@ pub fn load_initial(tuning: &Tuning) -> GameState {
 pub fn save(state: &GameState) {
     if let Ok(encoded) = save::encode(state) {
         let _ = LocalStorage::set(KEY_SAVE, encoded);
+        // NOTE: offline catch-up is driven by this LOCAL timestamp only. Shareable links
+        // deliberately carry no timestamp, so a recipient never gets free offline progress.
         let _ = LocalStorage::set(KEY_SAVE_AT, js_sys::Date::now());
     }
 }
