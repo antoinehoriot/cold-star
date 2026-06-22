@@ -7,6 +7,8 @@ use sim::origin::OriginDef;
 
 const TUNING_RON: &str = include_str!("../data/tuning.ron");
 const ORIGINS_RON: &str = include_str!("../data/origins.ron");
+const JOBS_RON: &str = include_str!("../data/jobs.ron");
+const MODULES_RON: &str = include_str!("../data/modules.ron");
 
 #[derive(Debug)]
 pub enum ContentError {
@@ -106,6 +108,74 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     Ok(())
 }
 
+use sim::job::{JobId, JobRegistry};
+use sim::module::{ModuleId, ModuleRegistry};
+
+pub fn load_jobs() -> Result<JobRegistry, ContentError> {
+    let jobs: Vec<sim::job::Job> =
+        ron::from_str(JOBS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    let reg = JobRegistry(jobs);
+    for want in [
+        JobId::Salvager,
+        JobId::Refiner,
+        JobId::Fabricator,
+        JobId::Assembler,
+        JobId::Hydroponicist,
+        JobId::Scientist,
+    ] {
+        if reg.get(want).is_none() {
+            return Err(ContentError::Invalid(format!("jobs.ron missing {want:?}")));
+        }
+    }
+    for j in reg.iter() {
+        if !j.power_draw.is_finite() || j.power_draw < 0.0 {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: power_draw must be finite >= 0",
+                j.id
+            )));
+        }
+    }
+    Ok(reg)
+}
+
+pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
+    let mods: Vec<sim::module::Module> =
+        ron::from_str(MODULES_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    let reg = ModuleRegistry(mods);
+    for want in [
+        ModuleId::Refinery,
+        ModuleId::Fabricator,
+        ModuleId::Assembler,
+        ModuleId::Hydroponics,
+        ModuleId::Lab,
+        ModuleId::Quarters,
+        ModuleId::StorageHold,
+        ModuleId::LifeSupport,
+        ModuleId::ReactorUpgrade,
+    ] {
+        if reg.get(want).is_none() {
+            return Err(ContentError::Invalid(format!(
+                "modules.ron missing {want:?}"
+            )));
+        }
+    }
+    for m in reg.iter() {
+        if m.cost.iter().any(|&(_, a)| !a.is_finite() || a < 0.0) {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: cost amounts must be finite >= 0",
+                m.id
+            )));
+        }
+        if !(m.cost_scaling.is_finite() && m.cost_scaling >= 1.0) {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: cost_scaling must be finite >= 1",
+                m.id
+            )));
+        }
+    }
+    Ok(reg)
+}
+
 pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
     let origins: Vec<OriginDef> =
         ron::from_str(ORIGINS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
@@ -141,6 +211,27 @@ pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loads_jobs_and_modules() {
+        let jobs = load_jobs().unwrap();
+        assert_eq!(jobs.0.len(), 6);
+        // Salvager is ungated and produces Scrap with zero draw.
+        let salv = jobs.get(sim::job::JobId::Salvager).unwrap();
+        assert!(salv.gated_by.is_none());
+        assert_eq!(salv.power_draw, 0.0);
+
+        let mods = load_modules().unwrap();
+        assert_eq!(mods.0.len(), 9);
+        // Lab is tier 2 and costs Data.
+        let lab = mods.get(sim::module::ModuleId::Lab).unwrap();
+        assert_eq!(lab.tier, 2);
+        assert!(
+            lab.cost
+                .iter()
+                .any(|&(k, _)| k == sim::resources::ResourceKind::Data)
+        );
+    }
 
     #[test]
     fn loads_three_origins() {

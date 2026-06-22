@@ -1,0 +1,14 @@
+[
+    ( id: Salvager,      name: "Salvager",      gated_by: None,
+      recipe: ( inputs: [], outputs: [(Scrap, 1.0)] ),               power_draw: 0.0, default_priority: 6 ),
+    ( id: Refiner,       name: "Refiner",       gated_by: Some(Refinery),
+      recipe: ( inputs: [(Scrap, 2.0)], outputs: [(Fuel, 1.0)] ),    power_draw: 2.0, default_priority: 2 ),
+    ( id: Fabricator,    name: "Fabricator",    gated_by: Some(Fabricator),
+      recipe: ( inputs: [(Scrap, 2.0)], outputs: [(Alloy, 1.0)] ),   power_draw: 1.0, default_priority: 3 ),
+    ( id: Assembler,     name: "Assembler",     gated_by: Some(Assembler),
+      recipe: ( inputs: [(Alloy, 2.0)], outputs: [(Components, 1.0)] ), power_draw: 1.0, default_priority: 4 ),
+    ( id: Hydroponicist, name: "Hydroponicist", gated_by: Some(Hydroponics),
+      recipe: ( inputs: [], outputs: [(Rations, 1.0)] ),             power_draw: 1.0, default_priority: 1 ),
+    ( id: Scientist,     name: "Scientist",     gated_by: Some(Lab),
+      recipe: ( inputs: [], outputs: [(Data, 1.0)] ),                power_draw: 1.0, default_priority: 5 ),
+]
