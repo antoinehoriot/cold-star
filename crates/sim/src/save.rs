@@ -7,6 +7,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 
 const MAGIC: &[u8; 4] = b"CSV1";
 
+/// Hard cap on inflated save size — stops a crafted "zip bomb" link from
+/// exhausting memory. Generous vs real saves (tens of bytes at M0), tiny vs a DoS.
+const MAX_DECOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveError {
     Serialize,
@@ -32,6 +36,10 @@ pub fn encode(state: &GameState) -> Result<String, SaveError> {
 
 /// Reverse of `encode`, validating magic, checksum, and version.
 pub fn decode(s: &str) -> Result<GameState, SaveError> {
+    decode_with_limit(s, MAX_DECOMPRESSED_BYTES)
+}
+
+fn decode_with_limit(s: &str, max_decompressed: usize) -> Result<GameState, SaveError> {
     let framed = B64.decode(s.trim()).map_err(|_| SaveError::Base64)?;
     if framed.len() < 8 || &framed[0..4] != MAGIC {
         return Err(SaveError::BadMagic);
@@ -41,8 +49,8 @@ pub fn decode(s: &str) -> Result<GameState, SaveError> {
     if crc32fast::hash(compressed) != crc {
         return Err(SaveError::Checksum);
     }
-    let bytes =
-        miniz_oxide::inflate::decompress_to_vec(compressed).map_err(|_| SaveError::Decompress)?;
+    let bytes = miniz_oxide::inflate::decompress_to_vec_with_limit(compressed, max_decompressed)
+        .map_err(|_| SaveError::Decompress)?;
     let state: GameState = postcard::from_bytes(&bytes).map_err(|_| SaveError::Deserialize)?;
     if state.version != SAVE_VERSION {
         return Err(SaveError::Version(state.version));
@@ -101,5 +109,15 @@ mod tests {
     #[test]
     fn empty_input_is_bad_magic() {
         assert_eq!(decode(""), Err(SaveError::BadMagic));
+    }
+
+    #[test]
+    fn rejects_oversized_decompression() {
+        // A perfectly valid save, but decoded under a tiny output limit:
+        // the real payload inflates past the cap and must be rejected, not OOM.
+        let encoded = encode(&sample()).unwrap();
+        assert_eq!(decode_with_limit(&encoded, 4), Err(SaveError::Decompress));
+        // And the normal generous cap still round-trips fine:
+        assert_eq!(decode(&encoded).unwrap(), sample());
     }
 }
