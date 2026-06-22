@@ -10,8 +10,6 @@ pub struct Tuning {
     pub reactor_capacity: f64,
     /// Charge lost per tick.
     pub reactor_drain_per_tick: f64,
-    /// Legacy M0 stoke amount. Unused in M1; removed once feeding lands (Task 6).
-    pub reactor_stoke_amount: f64,
     /// Fraction of capacity at which the core becomes "established" (-> Stable).
     pub reactor_establish_threshold_frac: f64,
     /// Fraction of capacity below which an established core is "Failing".
@@ -47,7 +45,6 @@ impl Default for Tuning {
         Self {
             reactor_capacity: 100.0,
             reactor_drain_per_tick: 1.0,
-            reactor_stoke_amount: 10.0,
             reactor_establish_threshold_frac: 0.5,
             reactor_failing_threshold_frac: 0.2,
             reactor_ignition_seed: 10.0,

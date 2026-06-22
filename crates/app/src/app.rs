@@ -46,9 +46,9 @@ pub fn App() -> Element {
                 class: "act",
                 onclick: move |_| {
                     let t = tuning.read().clone();
-                    let _ = state.write().apply(&t, sim::state::Action::StokeCore);
+                    let _ = state.write().apply(&t, sim::state::Action::Salvage);
                 },
-                "Stoke the core"
+                "Salvage scrap"
             }
             button {
                 class: "act ghost",

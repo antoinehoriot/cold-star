@@ -59,12 +59,6 @@ impl Reactor {
         self.update_status(tuning);
     }
 
-    /// Legacy M0 stoke (kept until Task 6 removes the M0 action path).
-    pub fn stoke(&mut self, tuning: &Tuning) {
-        self.charge = (self.charge + tuning.reactor_stoke_amount).min(self.capacity);
-        self.update_status(tuning);
-    }
-
     fn update_status(&mut self, tuning: &Tuning) {
         if self.charge <= 0.0 {
             self.status = ReactorStatus::Cold;
