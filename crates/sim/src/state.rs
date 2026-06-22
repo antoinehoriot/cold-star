@@ -100,7 +100,7 @@ impl GameState {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
         }
         state.sync_priority(world);
-        state.update_disclosure_flags(tuning);
+        state.update_disclosure_flags(world);
         state
     }
 
@@ -263,7 +263,7 @@ impl GameState {
                 net,
                 starving,
             };
-            self.update_disclosure_flags(tuning);
+            self.update_disclosure_flags(world);
         }
     }
 
@@ -276,7 +276,7 @@ impl GameState {
                 }
                 self.reactor.ignite(tuning);
                 self.log_flavor("ignite", tuning);
-                self.update_disclosure_flags(tuning);
+                self.update_disclosure_flags(world);
                 Ok(())
             }
             Action::Salvage => {
@@ -286,7 +286,7 @@ impl GameState {
                 self.resources
                     .add(ResourceKind::Scrap, tuning.salvage_yield);
                 self.salvage_cooldown = tuning.salvage_cooldown_ticks;
-                self.update_disclosure_flags(tuning);
+                self.update_disclosure_flags(world);
                 Ok(())
             }
             Action::FeedCore => {
@@ -297,7 +297,7 @@ impl GameState {
                     return Err(Rejected("not enough scrap to feed the core"));
                 }
                 self.reactor.feed(tuning.feed_charge, tuning);
-                self.update_disclosure_flags(tuning);
+                self.update_disclosure_flags(world);
                 Ok(())
             }
             Action::ActivateCrewSource => {
@@ -316,7 +316,7 @@ impl GameState {
                 self.flags.insert(Flag::CrewSourceActive);
                 self.crew.begin_arrivals(tuning);
                 self.log_flavor("source_active", tuning);
-                self.update_disclosure_flags(tuning);
+                self.update_disclosure_flags(world);
                 Ok(())
             }
             Action::Build(id) => {
@@ -351,7 +351,7 @@ impl GameState {
                     self.reactor.capacity += module.unlocks.capacity_increase;
                 }
                 self.sync_priority(world);
-                self.update_disclosure_flags(tuning);
+                self.update_disclosure_flags(world);
                 Ok(())
             }
             Action::AssignCrew { job, delta } => {
@@ -392,7 +392,8 @@ impl GameState {
         }
     }
 
-    pub(crate) fn update_disclosure_flags(&mut self, tuning: &Tuning) {
+    pub(crate) fn update_disclosure_flags(&mut self, world: &World) {
+        let tuning = world.tuning;
         if self.reactor.status != ReactorStatus::Cold {
             self.flags.insert(Flag::SalvageUnlocked);
         }
@@ -407,6 +408,27 @@ impl GameState {
         }
         if self.crew.total > 0 {
             self.flags.insert(Flag::CrewArrived);
+        }
+        // M2 disclosure.
+        if self.flags.contains(&Flag::CoreEstablished) {
+            self.flags.insert(Flag::BuildMenuUnlocked);
+        }
+        // A built module that unlocks a job means the economy is open.
+        let economy_open = self.built.keys().any(|id| {
+            world
+                .modules
+                .get(*id)
+                .map(|mdef| mdef.unlocks.job.is_some())
+                .unwrap_or(false)
+        });
+        if economy_open {
+            self.flags.insert(Flag::EconomyUnlocked);
+        }
+        if self.telemetry.consumer_draw > 0.0 {
+            self.flags.insert(Flag::PowerBudgetVisible);
+        }
+        if self.resources.data > 0.0 {
+            self.flags.insert(Flag::Tier2Unlocked);
         }
     }
 }
@@ -745,6 +767,44 @@ mod tests {
         }
         assert_eq!(bulk.telemetry, step.telemetry);
         assert_eq!(bulk, step);
+    }
+
+    #[test]
+    fn m2_disclosure_flags_set_at_milestones() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new(&w, 1); // full-charge default origin -> established
+        // BuildMenuUnlocked is set once the core is established.
+        assert!(s.flags.contains(&Flag::BuildMenuUnlocked));
+        // No economy / power / tier-2 yet.
+        assert!(!s.flags.contains(&Flag::EconomyUnlocked));
+        assert!(!s.flags.contains(&Flag::PowerBudgetVisible));
+        assert!(!s.flags.contains(&Flag::Tier2Unlocked));
+
+        // Build a Refinery (job-unlocking module) -> EconomyUnlocked.
+        s.resources.add(ResourceKind::Scrap, 30.0);
+        s.apply(&w, Action::Build(ModuleId::Refinery)).unwrap();
+        assert!(s.flags.contains(&Flag::EconomyUnlocked));
+
+        // Assign a Refiner with scrap + crew and advance -> a power-drawing job
+        // runs -> PowerBudgetVisible.
+        s.crew.total = 1;
+        s.resources.add(ResourceKind::Scrap, 20.0);
+        s.apply(
+            &w,
+            Action::AssignCrew {
+                job: JobId::Refiner,
+                delta: 1,
+            },
+        )
+        .unwrap();
+        s.advance(&w, 1);
+        assert!(s.flags.contains(&Flag::PowerBudgetVisible));
+
+        // Data present -> Tier2Unlocked.
+        s.resources.add(ResourceKind::Data, 1.0);
+        s.advance(&w, 1);
+        assert!(s.flags.contains(&Flag::Tier2Unlocked));
     }
 
     #[test]

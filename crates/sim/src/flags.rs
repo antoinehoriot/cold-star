@@ -11,6 +11,10 @@ pub enum Flag {
     CrewSourceAvailable,
     CrewSourceActive,
     CrewArrived,
+    EconomyUnlocked,
+    BuildMenuUnlocked,
+    PowerBudgetVisible,
+    Tier2Unlocked,
 }
 
 #[cfg(test)]
