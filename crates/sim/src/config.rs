@@ -16,6 +16,8 @@ pub struct Tuning {
     pub reactor_failing_threshold_frac: f64,
     /// Charge granted by igniting a Cold core.
     pub reactor_ignition_seed: f64,
+    /// Mandatory baseline draw the reactor must always cover; drains charge when unfuelled.
+    pub reactor_baseline_draw: f64,
 
     // Feeding / salvage
     /// Scrap consumed by one FeedCore action.
@@ -65,6 +67,7 @@ impl Default for Tuning {
             reactor_establish_threshold_frac: 0.5,
             reactor_failing_threshold_frac: 0.2,
             reactor_ignition_seed: 10.0,
+            reactor_baseline_draw: 1.0,
             feed_cost_scrap: 10.0,
             feed_charge: 20.0,
             salvage_yield: 5.0,

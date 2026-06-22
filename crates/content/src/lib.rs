@@ -63,6 +63,7 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     }
     for (name, v) in [
         ("reactor_ignition_seed", t.reactor_ignition_seed),
+        ("reactor_baseline_draw", t.reactor_baseline_draw),
         ("feed_cost_scrap", t.feed_cost_scrap),
         ("feed_charge", t.feed_charge),
         ("salvage_yield", t.salvage_yield),
@@ -324,5 +325,6 @@ mod tests {
         assert_eq!(t.crew_ration_upkeep, 0.1);
         assert_eq!(t.starving_efficiency, 0.5);
         assert_eq!(t.base_housing, 4);
+        assert_eq!(t.reactor_baseline_draw, 1.0);
     }
 }

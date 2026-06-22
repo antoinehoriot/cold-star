@@ -207,14 +207,10 @@ impl GameState {
                 self.reactor.capacity,
                 self.resources.fuel,
                 tuning.fuel_per_output,
+                tuning.reactor_baseline_draw,
             );
             self.resources.fuel = (self.resources.fuel - outcome.fuel_burned).max(0.0);
-            let active_draw: f64 = consumers
-                .iter()
-                .filter(|c| !outcome.paused.contains(&c.consumer))
-                .map(|c| c.draw)
-                .sum();
-            let overdrawn = active_draw > outcome.generation;
+            let overdrawn = outcome.active_draw > outcome.generation;
             self.reactor
                 .set_from_power(outcome.new_charge, overdrawn, tuning);
 
