@@ -263,6 +263,8 @@ impl GameState {
                 net,
                 starving,
             };
+            // NOTE: telemetry is fresh-written just above; update_disclosure_flags
+            // reads telemetry.consumer_draw for PowerBudgetVisible. Do not reorder.
             self.update_disclosure_flags(world);
         }
     }
@@ -805,6 +807,49 @@ mod tests {
         s.resources.add(ResourceKind::Data, 1.0);
         s.advance(&w, 1);
         assert!(s.flags.contains(&Flag::Tier2Unlocked));
+    }
+
+    #[test]
+    fn m2_flag_graph_is_reachable_from_a_running_core() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        // A full-charge default origin is already established (BuildMenuUnlocked).
+        let mut s = GameState::new(&w, 1);
+        assert!(s.flags.contains(&Flag::BuildMenuUnlocked));
+
+        // BuildMenu is reachable -> build a Refinery (Scrap-only, no prereqs).
+        s.resources.add(ResourceKind::Scrap, 30.0);
+        s.apply(&w, Action::Build(ModuleId::Refinery)).unwrap();
+        assert!(s.flags.contains(&Flag::EconomyUnlocked));
+
+        // Economy reachable -> assign a Refiner; feed it scrap + rations; advance.
+        s.crew.total = 1;
+        s.resources.add(ResourceKind::Scrap, 20.0);
+        s.resources.rations = 5.0;
+        s.apply(
+            &w,
+            Action::AssignCrew {
+                job: JobId::Refiner,
+                delta: 1,
+            },
+        )
+        .unwrap();
+        s.advance(&w, 1);
+        // A power-drawing job ran -> PowerBudgetVisible; it produced Fuel/Data? Refiner makes Fuel.
+        assert!(s.flags.contains(&Flag::PowerBudgetVisible));
+
+        // Reaching Data unlocks Tier2 (simulate Data arriving).
+        s.resources.add(ResourceKind::Data, 1.0);
+        s.advance(&w, 1);
+        assert!(s.flags.contains(&Flag::Tier2Unlocked));
+
+        // The UI dashboard outer-gate condition (any panel flag) is satisfiable.
+        assert!(
+            s.flags.contains(&Flag::BuildMenuUnlocked)
+                || s.flags.contains(&Flag::EconomyUnlocked)
+                || s.flags.contains(&Flag::PowerBudgetVisible)
+                || s.flags.contains(&Flag::SalvageUnlocked)
+        );
     }
 
     #[test]
