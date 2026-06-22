@@ -4,6 +4,7 @@ use sim::flags::Flag;
 use sim::job::JobRegistry;
 use sim::module::ModuleRegistry;
 use sim::origin::OriginDef;
+use sim::resources::ResourceKind;
 use sim::state::{Action, GameState, World};
 
 const CSS: &str = "
@@ -37,7 +38,77 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .log { margin-top: 1.5rem; border-top: 1px solid #16313f; padding-top: .8rem;
   max-height: 220px; overflow-y: auto; font-size: .82rem; line-height: 1.5; }
 .log-line { color: #8aa0b0; }
+.dash { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+@media (max-width: 640px) { .dash { grid-template-columns: 1fr; } }
+.col { display: flex; flex-direction: column; gap: 1.2rem; }
+.panel { border: 1px solid #16313f; border-radius: 5px; padding: .9rem 1rem; background: #0a141c; }
+.panel-title { font-size: .68rem; letter-spacing: .25em; color: #5b7686; margin-bottom: .6rem; }
+.bar { height: 6px; background: #0c1822; border-radius: 3px; overflow: hidden; margin: .3rem 0; }
+.bar > span { display: block; height: 100%; }
+.bar-gen > span { background: #6fb7d6; }
+.bar-draw > span { background: #e0a24a; }
+.bar-charge > span { background: #6fd6a0; }
+.res-row { display: flex; justify-content: space-between; font-size: .85rem; padding: .15rem 0; }
+.res-net-up { color: #6fd6a0; }
+.res-net-down { color: #d66f6f; }
+.res-full { color: #d6c46f; }
+.status-Straining { color: #e08a4a; }
+.status-Critical { color: #d66f6f; font-weight: 600; }
+.muted { color: #5b7686; font-size: .8rem; }
 ";
+
+#[component]
+fn PowerMeter(
+    status: String,
+    charge: f64,
+    capacity: f64,
+    fuel: f64,
+    generation: f64,
+    active_draw: f64,
+) -> Element {
+    let cap = if capacity > 0.0 { capacity } else { 1.0 };
+    let charge_pct = (charge / cap * 100.0).clamp(0.0, 100.0);
+    let scale = generation.max(active_draw).max(1.0);
+    let gen_pct = (generation / scale * 100.0).clamp(0.0, 100.0);
+    let draw_pct = (active_draw / scale * 100.0).clamp(0.0, 100.0);
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "REACTOR" }
+            div { class: "status status-{status}", "{status}" }
+            div { class: "muted", "Output {generation:.1}  \u{00b7}  Draw {active_draw:.1}" }
+            div { class: "bar bar-gen", span { style: "width: {gen_pct}%" } }
+            div { class: "bar bar-draw", span { style: "width: {draw_pct}%" } }
+            div { class: "muted", "Charge {charge:.0} / {capacity:.0}  \u{00b7}  Fuel {fuel:.0}" }
+            div { class: "bar bar-charge", span { style: "width: {charge_pct}%" } }
+        }
+    }
+}
+
+#[component]
+fn ResourcesPanel(rows: Vec<(String, f64, f64, f64)>) -> Element {
+    // rows: (name, amount, cap, net)
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "RESOURCES" }
+            for (name, amount, cap, net) in rows {
+                div { class: "res-row",
+                    span {
+                        class: if amount >= cap { "res-full" } else { "" },
+                        "{name}"
+                    }
+                    span {
+                        "{amount:.0} / {cap:.0}  "
+                        if net > 0.0 {
+                            span { class: "res-net-up", "\u{25b2}{net:.1}" }
+                        } else if net < 0.0 {
+                            span { class: "res-net-down", "\u{25bc}{(-net):.1}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[component]
 pub fn App() -> Element {
@@ -126,6 +197,24 @@ fn Console(
         .rev()
         .map(|e| (e.tick, e.text.clone()))
         .collect();
+    let economy_unlocked = gs.flags.contains(&Flag::EconomyUnlocked);
+    let power_visible = gs.flags.contains(&Flag::PowerBudgetVisible);
+    let fuel = gs.resources.fuel;
+    let generation = gs.telemetry.generation;
+    let active_draw = gs.telemetry.active_draw;
+    let res_rows: Vec<(String, f64, f64, f64)> = ResourceKind::ALL
+        .iter()
+        .filter(|k| gs.resources.amount(**k) > 0.0 || gs.telemetry.net.contains_key(*k))
+        .map(|k| {
+            let net = gs.telemetry.net.get(k).copied().unwrap_or(0.0);
+            (
+                format!("{k:?}"),
+                gs.resources.amount(*k),
+                gs.resources.cap,
+                net,
+            )
+        })
+        .collect();
     drop(snapshot);
 
     let mut act = move |action: Action| {
@@ -143,16 +232,7 @@ fn Console(
     };
 
     rsx! {
-        div { class: "readout", "REACTOR CORE" }
-        div { class: "charge", "{charge:.0} / {capacity:.0}" }
-        div { class: "status status-{status}", "{status}" }
-        if salvage_unlocked {
-            div { class: "res",
-                "Scrap: {scrap:.0}"
-                if crew_arrived { "   ·   Crew: {crew}" }
-            }
-        }
-
+        // Core action buttons — always rendered regardless of economy state.
         if is_cold {
             button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
         } else {
@@ -181,9 +261,49 @@ fn Console(
             "Copy save link"
         }
 
-        div { class: "log",
-            for (tick, text) in log_lines {
-                div { class: "log-line", "[{tick}] {text}" }
+        if economy_unlocked {
+            // Two-column dashboard (left column this task; right column Task 5).
+            div { class: "dash",
+                div { class: "col",
+                    if power_visible {
+                        PowerMeter {
+                            status: status.clone(),
+                            charge,
+                            capacity,
+                            fuel,
+                            generation,
+                            active_draw,
+                        }
+                    }
+                    ResourcesPanel { rows: res_rows.clone() }
+                    div { class: "panel",
+                        div { class: "panel-title", "LOG" }
+                        div { class: "log",
+                            for (tick, text) in log_lines.clone() {
+                                div { class: "log-line", "[{tick}] {text}" }
+                            }
+                        }
+                    }
+                }
+                div { class: "col",
+                    // Right column (JobPanel / BuildMenu / PriorityPanel) — Task 5.
+                }
+            }
+        } else {
+            // Pre-economy M1 readout.
+            div { class: "readout", "REACTOR CORE" }
+            div { class: "charge", "{charge:.0} / {capacity:.0}" }
+            div { class: "status status-{status}", "{status}" }
+            if salvage_unlocked {
+                div { class: "res",
+                    "Scrap: {scrap:.0}"
+                    if crew_arrived { "   \u{00b7}   Crew: {crew}" }
+                }
+            }
+            div { class: "log",
+                for (tick, text) in log_lines {
+                    div { class: "log-line", "[{tick}] {text}" }
+                }
             }
         }
     }
