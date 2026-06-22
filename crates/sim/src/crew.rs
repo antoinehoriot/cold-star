@@ -1,32 +1,34 @@
-//! Crew population. In M1 crew arrive on a timer once the source is active and
-//! passively auto-salvage a Scrap trickle. No assignment/upkeep yet (that is M2).
+//! Crew population + job assignments. M2: crew sit in an idle pool and are
+//! assigned to jobs; arrivals (from the crew-source) are capped by housing.
 
 use crate::config::Tuning;
+use crate::job::JobId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Crew {
-    pub count: u32,
+    pub total: u32,
     pub ticks_until_next: u32,
+    pub assignments: BTreeMap<JobId, u32>,
 }
 
 impl Crew {
-    /// Start the arrival timer (call when the crew-source is activated).
     pub fn begin_arrivals(&mut self, tuning: &Tuning) {
         self.ticks_until_next = tuning.arrival_interval;
     }
 
     /// Advance the arrival timer one tick. Returns true iff a crew arrived.
-    /// Caller must only invoke this while the crew-source is active.
-    pub fn tick_arrival(&mut self, tuning: &Tuning) -> bool {
-        if self.count >= tuning.crew_cap {
+    /// Arrivals stop at the `housing` cap.
+    pub fn tick_arrival(&mut self, housing: u32, tuning: &Tuning) -> bool {
+        if self.total >= housing {
             return false;
         }
         if self.ticks_until_next > 0 {
             self.ticks_until_next -= 1;
         }
         if self.ticks_until_next == 0 {
-            self.count += 1;
+            self.total += 1;
             self.ticks_until_next = tuning.arrival_interval;
             true
         } else {
@@ -34,9 +36,52 @@ impl Crew {
         }
     }
 
-    /// Scrap auto-salvaged this tick across all crew.
-    pub fn trickle(&self, tuning: &Tuning) -> f64 {
-        self.count as f64 * tuning.crew_trickle
+    pub fn assigned(&self, job: JobId) -> u32 {
+        self.assignments.get(&job).copied().unwrap_or(0)
+    }
+
+    pub fn idle(&self) -> u32 {
+        let assigned: u32 = self.assignments.values().sum();
+        self.total.saturating_sub(assigned)
+    }
+
+    /// Assign (`delta > 0`) or unassign (`delta < 0`) crew to `job`. Bounded by
+    /// idle crew (can't assign more than idle) and 0 (can't unassign below 0).
+    /// Returns true if any change was applied.
+    pub fn assign(&mut self, job: JobId, delta: i32) -> bool {
+        let current = self.assigned(job);
+        let change = if delta > 0 {
+            (delta as u32).min(self.idle())
+        } else if delta < 0 {
+            // clamp the removal to the current count
+            return if current == 0 {
+                false
+            } else {
+                let removed = ((-delta) as u32).min(current);
+                self.set(job, current - removed);
+                removed > 0
+            };
+        } else {
+            0
+        };
+        if change == 0 {
+            return false;
+        }
+        self.set(job, current + change);
+        true
+    }
+
+    fn set(&mut self, job: JobId, count: u32) {
+        if count == 0 {
+            self.assignments.remove(&job);
+        } else {
+            self.assignments.insert(job, count);
+        }
+    }
+
+    /// Total Rations consumed by upkeep this tick.
+    pub fn ration_upkeep(&self, tuning: &Tuning) -> f64 {
+        self.total as f64 * tuning.crew_ration_upkeep
     }
 }
 
@@ -45,41 +90,51 @@ mod tests {
     use super::*;
 
     fn t() -> Tuning {
-        Tuning::default() // arrival_interval 30, crew_cap 4, crew_trickle 0.5
+        Tuning::default()
     }
 
     #[test]
-    fn arrives_after_interval_up_to_cap() {
+    fn arrivals_capped_by_housing() {
         let tn = t();
         let mut c = Crew::default();
         c.begin_arrivals(&tn);
-        let mut arrivals = 0;
-        for _ in 0..(tn.arrival_interval * tn.crew_cap + tn.arrival_interval) {
-            if c.tick_arrival(&tn) {
-                arrivals += 1;
-            }
+        for _ in 0..(tn.arrival_interval * 10) {
+            c.tick_arrival(3, &tn);
         }
-        assert_eq!(c.count, tn.crew_cap);
-        assert_eq!(arrivals, tn.crew_cap); // never exceeds cap
+        assert_eq!(c.total, 3);
     }
 
     #[test]
-    fn first_arrival_lands_exactly_on_interval() {
-        let tn = t();
-        let mut c = Crew::default();
-        c.begin_arrivals(&tn);
-        for _ in 0..(tn.arrival_interval - 1) {
-            assert!(!c.tick_arrival(&tn));
-        }
-        assert!(c.tick_arrival(&tn)); // the interval-th tick
-        assert_eq!(c.count, 1);
+    fn assign_bounded_by_idle() {
+        let mut c = Crew {
+            total: 3,
+            ..Crew::default()
+        };
+        assert!(c.assign(JobId::Salvager, 5)); // only 3 idle
+        assert_eq!(c.assigned(JobId::Salvager), 3);
+        assert_eq!(c.idle(), 0);
+        assert!(!c.assign(JobId::Refiner, 1)); // none idle
     }
 
     #[test]
-    fn trickle_scales_with_count() {
+    fn unassign_returns_crew_to_idle() {
+        let mut c = Crew {
+            total: 3,
+            ..Crew::default()
+        };
+        c.assign(JobId::Salvager, 3);
+        assert!(c.assign(JobId::Salvager, -2));
+        assert_eq!(c.assigned(JobId::Salvager), 1);
+        assert_eq!(c.idle(), 2);
+    }
+
+    #[test]
+    fn ration_upkeep_scales_with_total() {
         let tn = t();
-        let mut c = Crew::default();
-        c.count = 3;
-        assert_eq!(c.trickle(&tn), 3.0 * tn.crew_trickle);
+        let c = Crew {
+            total: 5,
+            ..Crew::default()
+        };
+        assert_eq!(c.ration_upkeep(&tn), 5.0 * tn.crew_ration_upkeep);
     }
 }
