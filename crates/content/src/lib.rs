@@ -223,11 +223,20 @@ mod tests {
 
         let mods = load_modules().unwrap();
         assert_eq!(mods.0.len(), 9);
-        // Lab is tier 2 and costs Data.
+        // Lab is tier 2 but is NOT Data-gated (it unlocks the Scientist that
+        // PRODUCES Data — gating it on Data would deadlock).
         let lab = mods.get(sim::module::ModuleId::Lab).unwrap();
         assert_eq!(lab.tier, 2);
         assert!(
-            lab.cost
+            !lab.cost
+                .iter()
+                .any(|&(k, _)| k == sim::resources::ResourceKind::Data)
+        );
+        // The Assembler is the real Data sink (tier 2, costs Data).
+        let asm = mods.get(sim::module::ModuleId::Assembler).unwrap();
+        assert_eq!(asm.tier, 2);
+        assert!(
+            asm.cost
                 .iter()
                 .any(|&(k, _)| k == sim::resources::ResourceKind::Data)
         );
