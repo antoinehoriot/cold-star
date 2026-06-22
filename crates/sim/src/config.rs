@@ -40,6 +40,21 @@ pub struct Tuning {
     // Log
     /// Max retained event-log entries (oldest dropped).
     pub log_capacity: usize,
+
+    // M2 — power budget
+    /// Fuel burned per unit of reactor Output generated.
+    pub fuel_per_output: f64,
+    /// Base reactor max Output (raised by Reactor Upgrade modules).
+    pub reactor_base_max_output: f64,
+    // M2 — economy
+    /// Base storage cap applied to every resource (raised by Storage Hold).
+    pub resource_base_cap: f64,
+    /// Rations consumed per crew per tick.
+    pub crew_ration_upkeep: f64,
+    /// Output multiplier applied to all jobs while crew are starving.
+    pub starving_efficiency: f64,
+    /// Base crew housing cap (raised by Quarters).
+    pub base_housing: u32,
 }
 
 impl Default for Tuning {
@@ -59,6 +74,12 @@ impl Default for Tuning {
             arrival_interval: 30,
             crew_trickle: 0.5,
             log_capacity: 100,
+            fuel_per_output: 0.5,
+            reactor_base_max_output: 5.0,
+            resource_base_cap: 100.0,
+            crew_ration_upkeep: 0.1,
+            starving_efficiency: 0.5,
+            base_housing: 4,
         }
     }
 }

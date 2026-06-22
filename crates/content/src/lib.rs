@@ -82,6 +82,27 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     if t.log_capacity < 1 {
         return Err(ContentError::Invalid("log_capacity must be >= 1".into()));
     }
+    for (name, v) in [
+        ("fuel_per_output", t.fuel_per_output),
+        ("reactor_base_max_output", t.reactor_base_max_output),
+        ("resource_base_cap", t.resource_base_cap),
+        ("crew_ration_upkeep", t.crew_ration_upkeep),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
+    if !(t.starving_efficiency.is_finite()
+        && t.starving_efficiency > 0.0
+        && t.starving_efficiency <= 1.0)
+    {
+        return Err(ContentError::Invalid(
+            "starving_efficiency must be finite in (0, 1]".into(),
+        ));
+    }
+    if t.base_housing < 1 {
+        return Err(ContentError::Invalid("base_housing must be >= 1".into()));
+    }
     Ok(())
 }
 
@@ -192,5 +213,16 @@ mod tests {
             ..Tuning::default()
         };
         assert!(matches!(validate(&bad), Err(ContentError::Invalid(_))));
+    }
+
+    #[test]
+    fn loads_m2_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.fuel_per_output, 0.5);
+        assert_eq!(t.reactor_base_max_output, 5.0);
+        assert_eq!(t.resource_base_cap, 100.0);
+        assert_eq!(t.crew_ration_upkeep, 0.1);
+        assert_eq!(t.starving_efficiency, 0.5);
+        assert_eq!(t.base_housing, 4);
     }
 }
