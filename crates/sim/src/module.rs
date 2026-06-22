@@ -15,6 +15,7 @@ pub enum ModuleId {
     StorageHold,
     LifeSupport,
     ReactorUpgrade,
+    Capacitor,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

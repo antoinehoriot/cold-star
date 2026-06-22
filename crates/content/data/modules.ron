@@ -17,4 +17,14 @@
       requires_modules: [Fabricator], unlocks: ( job: Some(Scientist) ) ),
     ( id: Assembler, name: "Assembler", tier: 2, cost: [(Alloy, 25.0), (Data, 10.0)], cost_scaling: 1.0, repeatable: false,
       requires_modules: [Fabricator], unlocks: ( job: Some(Assembler) ) ),
+    (
+        id: Capacitor,
+        name: "Capacitor Array",
+        tier: 2,
+        cost: [(Alloy, 15.0), (Components, 5.0)],
+        cost_scaling: 1.5,
+        repeatable: true,
+        requires_modules: [Assembler],
+        unlocks: (max_output: 4.0, capacity_increase: 30.0),
+    ),
 ]

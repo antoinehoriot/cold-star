@@ -153,6 +153,7 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
         ModuleId::StorageHold,
         ModuleId::LifeSupport,
         ModuleId::ReactorUpgrade,
+        ModuleId::Capacitor,
     ] {
         if reg.get(want).is_none() {
             return Err(ContentError::Invalid(format!(
@@ -172,6 +173,15 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
                 "{:?}: cost_scaling must be finite >= 1",
                 m.id
             )));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for &(k, _) in &m.cost {
+            if !seen.insert(k) {
+                return Err(ContentError::Invalid(format!(
+                    "{:?}: duplicate resource kind in cost",
+                    m.id
+                )));
+            }
         }
     }
     Ok(reg)
@@ -223,7 +233,7 @@ mod tests {
         assert_eq!(salv.power_draw, 0.0);
 
         let mods = load_modules().unwrap();
-        assert_eq!(mods.0.len(), 9);
+        assert_eq!(mods.0.len(), 10);
         // Lab is tier 2 but is NOT Data-gated (it unlocks the Scientist that
         // PRODUCES Data — gating it on Data would deadlock).
         let lab = mods.get(sim::module::ModuleId::Lab).unwrap();
@@ -240,6 +250,14 @@ mod tests {
             asm.cost
                 .iter()
                 .any(|&(k, _)| k == sim::resources::ResourceKind::Data)
+        );
+        // Capacitor is the Components sink (tier 2, costs Components).
+        let cap = mods.get(sim::module::ModuleId::Capacitor).unwrap();
+        assert_eq!(cap.tier, 2);
+        assert!(
+            cap.cost
+                .iter()
+                .any(|&(k, _)| k == sim::resources::ResourceKind::Components)
         );
     }
 
