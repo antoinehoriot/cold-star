@@ -95,16 +95,17 @@ fn PowerMeter(
 }
 
 #[component]
-fn ResourcesPanel(rows: Vec<(String, f64, f64, f64)>) -> Element {
-    // rows: (name, amount, cap, net)
+fn ResourcesPanel(rows: Vec<(String, f64, f64, f64, bool)>) -> Element {
+    // rows: (name, amount, cap, net, at_cap)
     rsx! {
         div { class: "panel",
             div { class: "panel-title", "RESOURCES" }
-            for (name, amount, cap, net) in rows {
+            for (name, amount, cap, net, at_cap) in rows {
                 div { class: "res-row",
                     span {
-                        class: if amount >= cap { "res-full" } else { "" },
+                        class: if at_cap { "res-full" } else { "" },
                         "{name}"
+                        if at_cap { span { class: "res-full", " (full)" } }
                     }
                     span {
                         "{amount:.0} / {cap:.0}  "
@@ -161,20 +162,28 @@ fn JobPanel(
 
 #[component]
 fn BuildMenu(
-    rows: Vec<(sim::module::ModuleId, String, String, u32)>,
+    rows: Vec<(sim::module::ModuleId, String, String, u32, bool)>,
     on_build: EventHandler<sim::module::ModuleId>,
 ) -> Element {
     rsx! {
         div { class: "panel",
             div { class: "panel-title", "BUILD" }
-            for (id, name, cost, n) in rows {
+            for (id, name, cost, n, affordable) in rows {
                 div { class: "build-row",
                     span {
                         "{name}"
                         if n > 0 { span { class: "muted", " ({n})" } }
                         div { class: "cost", "{cost}" }
                     }
-                    button { class: "mini", onclick: move |_| on_build.call(id), "build" }
+                    span {
+                        button {
+                            class: "mini",
+                            disabled: !affordable,
+                            onclick: move |_| on_build.call(id),
+                            "build"
+                        }
+                        if !affordable { span { class: "muted", " (can't afford)" } }
+                    }
                 }
             }
         }
@@ -292,20 +301,19 @@ fn Console(
         .collect();
     let economy_unlocked = gs.flags.contains(&Flag::EconomyUnlocked);
     let power_visible = gs.flags.contains(&Flag::PowerBudgetVisible);
+    let build_menu_unlocked = gs.flags.contains(&Flag::BuildMenuUnlocked);
     let fuel = gs.resources.fuel;
     let generation = gs.telemetry.generation;
     let active_draw = gs.telemetry.active_draw;
-    let res_rows: Vec<(String, f64, f64, f64)> = ResourceKind::ALL
+    let res_rows: Vec<(String, f64, f64, f64, bool)> = ResourceKind::ALL
         .iter()
         .filter(|k| gs.resources.amount(**k) > 0.0 || gs.telemetry.net.contains_key(*k))
         .map(|k| {
             let net = gs.telemetry.net.get(k).copied().unwrap_or(0.0);
-            (
-                format!("{k:?}"),
-                gs.resources.amount(*k),
-                gs.resources.cap,
-                net,
-            )
+            let amount = gs.resources.amount(*k);
+            let cap = gs.resources.cap;
+            let at_cap = cap.is_finite() && amount >= cap;
+            (format!("{k:?}"), amount, cap, net, at_cap)
         })
         .collect();
     let idle = gs.crew.idle();
@@ -331,7 +339,7 @@ fn Console(
             (j.id, j.name.clone(), count, count > 0, dark)
         })
         .collect();
-    let build_rows: Vec<(sim::module::ModuleId, String, String, u32)> = modules
+    let build_rows: Vec<(sim::module::ModuleId, String, String, u32, bool)> = modules
         .read()
         .iter()
         .filter(|m| {
@@ -341,13 +349,20 @@ fn Console(
         })
         .map(|m| {
             let n = gs.built_count(m.id);
-            let cost = m
+            let scaled_cost: Vec<(ResourceKind, f64)> = m
                 .cost
                 .iter()
-                .map(|(k, a)| format!("{:.0} {k:?}", a * m.cost_scaling.powi(n as i32)))
+                .map(|(k, a)| (*k, a * m.cost_scaling.powi(n as i32)))
+                .collect();
+            let cost = scaled_cost
+                .iter()
+                .map(|(k, a)| format!("{:.0} {k:?}", a))
                 .collect::<Vec<_>>()
                 .join(", ");
-            (m.id, m.name.clone(), cost, n)
+            let affordable = scaled_cost
+                .iter()
+                .all(|(k, a)| gs.resources.amount(*k) >= *a);
+            (m.id, m.name.clone(), cost, n, affordable)
         })
         .collect();
     let prio_rows: Vec<(sim::priority::Consumer, String, bool, bool)> = {
@@ -415,8 +430,8 @@ fn Console(
             "Copy save link"
         }
 
-        if economy_unlocked {
-            // Two-column dashboard (left column this task; right column Task 5).
+        if build_menu_unlocked || economy_unlocked || power_visible || salvage_unlocked {
+            // Two-column dashboard — panels appear via per-panel disclosure flags (§5).
             div { class: "dash",
                 div { class: "col",
                     if power_visible {
@@ -429,7 +444,9 @@ fn Console(
                             active_draw,
                         }
                     }
-                    ResourcesPanel { rows: res_rows.clone() }
+                    if salvage_unlocked {
+                        ResourcesPanel { rows: res_rows.clone() }
+                    }
                     div { class: "panel",
                         div { class: "panel-title", "LOG" }
                         div { class: "log",
@@ -440,31 +457,35 @@ fn Console(
                     }
                 }
                 div { class: "col",
-                    JobPanel {
-                        idle,
-                        starving,
-                        rows: job_rows.clone(),
-                        on_assign: move |(job, delta)| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m };
-                            if let Some(gs) = state.write().as_mut() {
-                                let _ = gs.apply(&world, Action::AssignCrew { job, delta });
-                            }
-                        },
+                    if economy_unlocked {
+                        JobPanel {
+                            idle,
+                            starving,
+                            rows: job_rows.clone(),
+                            on_assign: move |(job, delta)| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m };
+                                if let Some(gs) = state.write().as_mut() {
+                                    let _ = gs.apply(&world, Action::AssignCrew { job, delta });
+                                }
+                            },
+                        }
                     }
-                    BuildMenu {
-                        rows: build_rows.clone(),
-                        on_build: move |id| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m };
-                            if let Some(gs) = state.write().as_mut() {
-                                let _ = gs.apply(&world, Action::Build(id));
-                            }
-                        },
+                    if build_menu_unlocked {
+                        BuildMenu {
+                            rows: build_rows.clone(),
+                            on_build: move |id| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m };
+                                if let Some(gs) = state.write().as_mut() {
+                                    let _ = gs.apply(&world, Action::Build(id));
+                                }
+                            },
+                        }
                     }
                     if power_visible {
                         PriorityPanel {
@@ -483,7 +504,7 @@ fn Console(
                 }
             }
         } else {
-            // Pre-economy M1 readout.
+            // Pre-dashboard M1 readout — shown before any panel is unlocked.
             div { class: "readout", "REACTOR CORE" }
             div { class: "charge", "{charge:.0} / {capacity:.0}" }
             div { class: "status status-{status}", "{status}" }
