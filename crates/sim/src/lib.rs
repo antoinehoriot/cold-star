@@ -16,6 +16,7 @@ pub mod resources;
 pub mod rng;
 pub mod save;
 pub mod state;
+pub mod telemetry;
 pub mod time;
 
 pub use config::Tuning;
@@ -32,3 +33,4 @@ pub use reactor::{Reactor, ReactorStatus};
 pub use resources::{ResourceKind, Resources};
 pub use rng::Rng;
 pub use state::{Action, GameState, Rejected, SAVE_VERSION, World};
+pub use telemetry::Telemetry;

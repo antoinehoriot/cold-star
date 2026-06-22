@@ -16,10 +16,11 @@ use crate::priority::{Consumer, Priority};
 use crate::reactor::{Reactor, ReactorStatus};
 use crate::resources::{ResourceKind, Resources};
 use crate::rng::Rng;
+use crate::telemetry::Telemetry;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_VERSION: u32 = 4;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
 /// not part of the saved state).
@@ -58,6 +59,7 @@ pub struct GameState {
     pub salvage_cooldown: u32,
     pub built: BTreeMap<ModuleId, u32>,
     pub priority: Priority,
+    pub telemetry: Telemetry,
 }
 
 impl GameState {
@@ -92,6 +94,7 @@ impl GameState {
             salvage_cooldown: 0,
             built: BTreeMap::new(),
             priority: Priority::default(),
+            telemetry: Telemetry::default(),
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -183,6 +186,7 @@ impl GameState {
     pub fn advance(&mut self, world: &World, ticks: u64) {
         let tuning = world.tuning;
         for _ in 0..ticks {
+            let before: [f64; 6] = ResourceKind::ALL.map(|k| self.resources.amount(k));
             let prev_status = self.reactor.status;
             self.tick += 1;
             if self.salvage_cooldown > 0 {
@@ -218,7 +222,7 @@ impl GameState {
                 .set_from_power(outcome.new_charge, overdrawn, tuning);
 
             // --- economy (two-phase) ---
-            run_economy(
+            let report = run_economy(
                 &self.crew.assignments,
                 world.jobs,
                 &outcome.paused,
@@ -242,6 +246,23 @@ impl GameState {
                     _ => {}
                 }
             }
+            let mut net = std::collections::BTreeMap::new();
+            for (i, k) in ResourceKind::ALL.iter().enumerate() {
+                let delta = self.resources.amount(*k) - before[i];
+                if delta != 0.0 {
+                    net.insert(*k, delta);
+                }
+            }
+            self.telemetry = Telemetry {
+                generation: outcome.generation,
+                consumer_draw: outcome.consumer_draw,
+                active_draw: outcome.active_draw,
+                paused: outcome.paused.clone(),
+                starved_input: report.starved_input.clone(),
+                ran: report.ran.clone(),
+                net,
+                starving,
+            };
             self.update_disclosure_flags(tuning);
         }
     }
@@ -468,10 +489,10 @@ mod tests {
     }
 
     #[test]
-    fn new_game_is_versioned_v3() {
+    fn new_game_is_versioned_v4() {
         let (t, j, m) = (Tuning::default(), jobs(), modules());
         let s = GameState::new(&world(&t, &j, &m), 1);
-        assert_eq!(s.version, 3);
+        assert_eq!(s.version, 4);
         assert_eq!(s.resources.cap, t.resource_base_cap);
     }
 
@@ -680,6 +701,50 @@ mod tests {
         assert!(!s.reactor.established);
         assert!(s.flags.contains(&Flag::SalvageUnlocked));
         assert!(!s.flags.contains(&Flag::CoreEstablished));
+    }
+
+    #[test]
+    fn telemetry_records_last_tick() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new(&w, 1);
+        s.crew.total = 2;
+        s.resources.rations = 1.0; // ensure crew are not starving (upkeep = 2 × 0.1 = 0.2)
+        s.apply(
+            &w,
+            Action::AssignCrew {
+                job: JobId::Salvager,
+                delta: 2,
+            },
+        )
+        .unwrap();
+        s.advance(&w, 1);
+        // 2 salvagers produced +2 scrap this tick.
+        assert_eq!(
+            s.telemetry
+                .net
+                .get(&ResourceKind::Scrap)
+                .copied()
+                .unwrap_or(0.0),
+            2.0
+        );
+        assert!(s.telemetry.ran.contains(&JobId::Salvager));
+        // Salvager draws no power, so consumer_draw is 0 and nothing is paused.
+        assert_eq!(s.telemetry.consumer_draw, 0.0);
+        assert!(s.telemetry.paused.is_empty());
+    }
+
+    #[test]
+    fn telemetry_is_deterministic_across_batching() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let mut bulk = GameState::new(&world(&t, &j, &m), 1);
+        let mut step = GameState::new(&world(&t, &j, &m), 1);
+        bulk.advance(&world(&t, &j, &m), 10);
+        for _ in 0..10 {
+            step.advance(&world(&t, &j, &m), 1);
+        }
+        assert_eq!(bulk.telemetry, step.telemetry);
+        assert_eq!(bulk, step);
     }
 
     #[test]

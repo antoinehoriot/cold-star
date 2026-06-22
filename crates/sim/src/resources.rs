@@ -13,6 +13,18 @@ pub enum ResourceKind {
     Data,
 }
 
+impl ResourceKind {
+    /// All resource kinds, in declaration order. Deterministic iteration.
+    pub const ALL: [ResourceKind; 6] = [
+        ResourceKind::Scrap,
+        ResourceKind::Alloy,
+        ResourceKind::Fuel,
+        ResourceKind::Rations,
+        ResourceKind::Components,
+        ResourceKind::Data,
+    ];
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resources {
     pub scrap: f64,
