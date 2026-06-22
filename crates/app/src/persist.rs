@@ -57,6 +57,9 @@ pub fn copy_link(state: &GameState) {
             if let Ok(href) = win.location().href() {
                 let _ = win.navigator().clipboard().write_text(&href);
             }
+            alert(
+                "Save link is in the address bar (and copied to your clipboard if your browser allowed it).",
+            );
         }
     }
 }
