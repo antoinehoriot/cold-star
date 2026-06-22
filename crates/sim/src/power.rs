@@ -18,7 +18,10 @@ pub struct PowerOutcome {
     pub fuel_burned: f64,
     pub new_charge: f64,
     pub paused: BTreeSet<Consumer>,
+    /// Total draw (baseline + active consumers). Authoritative for charge math.
     pub active_draw: f64,
+    /// Consumer-only draw (excludes baseline). Used to determine overdraw status.
+    pub consumer_draw: f64,
 }
 
 /// `ordered` must be highest-priority-first.
@@ -50,6 +53,7 @@ pub fn resolve_power(
 
     // The baseline is mandatory — always active, never paused.
     let mut active_draw = baseline_draw;
+    let mut consumer_draw = 0.0;
     let mut paused = BTreeSet::new();
     let mut cut = false;
     for c in ordered {
@@ -58,6 +62,7 @@ pub fn resolve_power(
             paused.insert(c.consumer);
         } else {
             active_draw += c.draw;
+            consumer_draw += c.draw;
         }
     }
 
@@ -70,6 +75,7 @@ pub fn resolve_power(
         new_charge,
         paused,
         active_draw,
+        consumer_draw,
     }
 }
 

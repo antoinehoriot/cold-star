@@ -210,7 +210,10 @@ impl GameState {
                 tuning.reactor_baseline_draw,
             );
             self.resources.fuel = (self.resources.fuel - outcome.fuel_burned).max(0.0);
-            let overdrawn = outcome.active_draw > outcome.generation;
+            // Overdraw status is driven by consumer demand vs generation only;
+            // the baseline is the reactor's own idle cost and does not trigger
+            // the Straining/Critical branch.
+            let overdrawn = outcome.consumer_draw > outcome.generation;
             self.reactor
                 .set_from_power(outcome.new_charge, overdrawn, tuning);
 
@@ -568,5 +571,138 @@ mod tests {
         )
         .unwrap();
         assert!(s.priority.rank(c).unwrap() <= before);
+    }
+
+    fn bank(s: &mut GameState, w: &World, tn: &Tuning, times: u32) {
+        for _ in 0..times {
+            s.apply(w, Action::Salvage).unwrap();
+            s.advance(w, tn.salvage_cooldown_ticks as u64);
+        }
+    }
+
+    #[test]
+    fn advance_accumulates_ticks() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new(&w, 1);
+        s.advance(&w, 5);
+        assert_eq!(s.tick, 5);
+    }
+
+    #[test]
+    fn ignite_only_from_cold() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let origin = OriginDef {
+            start: crate::origin::OriginStart {
+                scrap: 0.0,
+                reactor_capacity: 60.0,
+                reactor_charge: 0.0,
+            },
+            ..default_origin_def(&t)
+        };
+        let mut s = GameState::new_with_origin(&origin, &w, 1);
+        assert_eq!(s.reactor.status, ReactorStatus::Cold);
+        assert!(s.apply(&w, Action::Ignite).is_ok());
+        assert_eq!(s.reactor.status, ReactorStatus::Igniting);
+        assert!(s.flags.contains(&Flag::SalvageUnlocked));
+        assert_eq!(
+            s.apply(&w, Action::Ignite),
+            Err(Rejected("the core is already lit"))
+        );
+    }
+
+    #[test]
+    fn feed_rejected_without_scrap() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new(&w, 1);
+        assert_eq!(s.resources.scrap, 0.0);
+        assert_eq!(
+            s.apply(&w, Action::FeedCore),
+            Err(Rejected("not enough scrap to feed the core"))
+        );
+    }
+
+    #[test]
+    fn salvage_sets_cooldown_and_blocks_repeat() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new(&w, 1);
+        assert!(s.apply(&w, Action::Salvage).is_ok());
+        assert_eq!(s.salvage_cooldown, t.salvage_cooldown_ticks);
+        assert_eq!(
+            s.apply(&w, Action::Salvage),
+            Err(Rejected("salvage is on cooldown"))
+        );
+        s.advance(&w, t.salvage_cooldown_ticks as u64);
+        assert_eq!(s.salvage_cooldown, 0);
+        assert!(s.apply(&w, Action::Salvage).is_ok());
+    }
+
+    #[test]
+    fn crew_source_requires_availability_and_scrap() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new(&w, 1);
+        assert_eq!(
+            s.apply(&w, Action::ActivateCrewSource),
+            Err(Rejected("the crew-source is not available yet"))
+        );
+        bank(
+            &mut s,
+            &w,
+            &t,
+            (t.crew_source_cost / t.salvage_yield) as u32,
+        );
+        assert!(s.flags.contains(&Flag::CrewSourceAvailable));
+        assert!(s.apply(&w, Action::ActivateCrewSource).is_ok());
+        assert_eq!(
+            s.apply(&w, Action::ActivateCrewSource),
+            Err(Rejected("the crew-source is already active"))
+        );
+    }
+
+    #[test]
+    fn hot_start_below_establish_is_igniting_and_unlocked() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let w = world(&t, &j, &m);
+        let origin = OriginDef {
+            start: crate::origin::OriginStart {
+                scrap: 15.0,
+                reactor_capacity: 140.0,
+                reactor_charge: 35.0,
+            },
+            ..default_origin_def(&t)
+        };
+        let s = GameState::new_with_origin(&origin, &w, 1);
+        assert_eq!(s.reactor.status, ReactorStatus::Igniting);
+        assert!(!s.reactor.established);
+        assert!(s.flags.contains(&Flag::SalvageUnlocked));
+        assert!(!s.flags.contains(&Flag::CoreEstablished));
+    }
+
+    #[test]
+    fn unfuelled_core_drains_to_failing_then_cold_with_log() {
+        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let mut flavor = std::collections::BTreeMap::new();
+        flavor.insert("failing".to_string(), "FAILING".to_string());
+        flavor.insert("cold".to_string(), "COLD".to_string());
+        let origin = OriginDef {
+            flavor,
+            start: crate::origin::OriginStart {
+                scrap: 0.0,
+                reactor_capacity: 100.0,
+                reactor_charge: 100.0,
+            },
+            ..default_origin_def(&t)
+        };
+        let w = world(&t, &j, &m);
+        let mut s = GameState::new_with_origin(&origin, &w, 1);
+        // No fuel, no jobs: the baseline reactor load drains charge to Cold.
+        s.advance(&w, 130);
+        let texts: Vec<_> = s.log.entries().iter().map(|e| e.text.clone()).collect();
+        assert!(texts.iter().any(|x| x == "FAILING"));
+        assert!(texts.iter().any(|x| x == "COLD"));
     }
 }
