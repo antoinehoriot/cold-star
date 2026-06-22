@@ -31,4 +31,4 @@ pub use priority::{Consumer, Priority};
 pub use reactor::{Reactor, ReactorStatus};
 pub use resources::{ResourceKind, Resources};
 pub use rng::Rng;
-pub use state::{Action, GameState, Rejected, SAVE_VERSION};
+pub use state::{Action, GameState, Rejected, SAVE_VERSION, World};

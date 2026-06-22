@@ -80,8 +80,18 @@ mod tests {
     use crate::config::Tuning;
 
     fn sample() -> GameState {
-        let mut s = GameState::new(&Tuning::default(), 0xABCD);
-        s.advance(&Tuning::default(), 17);
+        use crate::job::JobRegistry;
+        use crate::module::ModuleRegistry;
+        let t = Tuning::default();
+        let jobs = JobRegistry(vec![]);
+        let mods = ModuleRegistry(vec![]);
+        let world = crate::state::World {
+            tuning: &t,
+            jobs: &jobs,
+            modules: &mods,
+        };
+        let mut s = GameState::new(&world, 0xABCD);
+        s.advance(&world, 17);
         s
     }
 
