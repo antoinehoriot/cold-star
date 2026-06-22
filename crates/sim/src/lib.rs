@@ -5,6 +5,7 @@ pub mod config;
 pub mod reactor;
 pub mod rng;
 pub mod state;
+pub mod time;
 
 pub use config::Tuning;
 pub use reactor::{Reactor, ReactorStatus};
