@@ -3,8 +3,10 @@
 //! Later milestones move this to external `.ron` assets and a full registry.
 
 use sim::Tuning;
+use sim::origin::OriginDef;
 
 const TUNING_RON: &str = include_str!("../data/tuning.ron");
+const ORIGINS_RON: &str = include_str!("../data/origins.ron");
 
 #[derive(Debug)]
 pub enum ContentError {
@@ -83,9 +85,68 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     Ok(())
 }
 
+pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
+    let origins: Vec<OriginDef> =
+        ron::from_str(ORIGINS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    if origins.is_empty() {
+        return Err(ContentError::Invalid("no origins defined".into()));
+    }
+    for o in &origins {
+        if !(o.start.reactor_capacity.is_finite() && o.start.reactor_capacity > 0.0) {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: reactor_capacity must be finite > 0",
+                o.id
+            )));
+        }
+        if !o.start.reactor_charge.is_finite()
+            || o.start.reactor_charge < 0.0
+            || o.start.reactor_charge > o.start.reactor_capacity
+        {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: reactor_charge must be in [0, capacity]",
+                o.id
+            )));
+        }
+        if !o.start.scrap.is_finite() || o.start.scrap < 0.0 {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: scrap must be finite >= 0",
+                o.id
+            )));
+        }
+    }
+    Ok(origins)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loads_three_origins() {
+        let origins = load_origins().unwrap();
+        assert_eq!(origins.len(), 3);
+        let ids: Vec<_> = origins.iter().map(|o| o.id).collect();
+        assert!(ids.contains(&sim::origin::Origin::Drifter));
+        assert!(ids.contains(&sim::origin::Origin::Hollow));
+        assert!(ids.contains(&sim::origin::Origin::Seed));
+        // Every origin resolves the flavor keys the engine logs on.
+        for o in &origins {
+            for key in [
+                "ignite",
+                "stable",
+                "source_active",
+                "crew_arrived",
+                "failing",
+                "cold",
+            ] {
+                assert!(!o.flavor(key).is_empty(), "{:?} missing flavor {key}", o.id);
+            }
+            assert!(o.start.reactor_capacity > 0.0);
+            assert!(
+                o.start.reactor_charge >= 0.0 && o.start.reactor_charge <= o.start.reactor_capacity
+            );
+        }
+    }
 
     #[test]
     fn loads_expanded_m1_tuning() {

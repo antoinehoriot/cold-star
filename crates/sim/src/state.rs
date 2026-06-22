@@ -2,18 +2,12 @@
 //! `apply` (player intent). Both are pure functions of state + tuning.
 
 use crate::config::Tuning;
+use crate::origin::Origin;
 use crate::reactor::Reactor;
 use crate::rng::Rng;
 use serde::{Deserialize, Serialize};
 
 pub const SAVE_VERSION: u32 = 1;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Origin {
-    Drifter,
-    Hollow,
-    Seed,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Action {
