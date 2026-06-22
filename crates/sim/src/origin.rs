@@ -20,6 +20,8 @@ pub struct OriginStart {
     pub reactor_charge: f64,
 }
 
+/// NOTE: per-origin tuning overrides (spec §5 `tuning_overrides`) are deferred to
+/// M2 — all M1 origins share base tuning, differing only by labels + `start`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OriginDef {
     pub id: Origin,

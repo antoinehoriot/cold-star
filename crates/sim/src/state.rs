@@ -91,6 +91,8 @@ impl GameState {
             if self.flags.contains(&Flag::CrewSourceActive) && self.crew.tick_arrival(tuning) {
                 self.log_flavor("crew_arrived", tuning);
             }
+            // A crew that arrives this tick also contributes its trickle this
+            // tick (count is incremented above before trickle is read). Deterministic.
             let trickle = self.crew.trickle(tuning);
             if trickle > 0.0 {
                 self.resources.add_scrap(trickle);
@@ -318,6 +320,25 @@ mod tests {
         let texts: Vec<_> = s.log.entries().iter().map(|e| e.text.clone()).collect();
         assert!(texts.iter().any(|x| x == "FAILING"));
         assert!(texts.iter().any(|x| x == "COLD"));
+    }
+
+    #[test]
+    fn hot_start_below_establish_is_igniting_and_unlocked() {
+        let tn = t();
+        // capacity 140, charge 35 -> below establish (140 * 0.5 = 70).
+        let origin = OriginDef {
+            start: crate::origin::OriginStart {
+                scrap: 15.0,
+                reactor_capacity: 140.0,
+                reactor_charge: 35.0,
+            },
+            ..default_origin_def(&tn)
+        };
+        let s = GameState::new_with_origin(&origin, &tn, 1);
+        assert_eq!(s.reactor.status, ReactorStatus::Igniting);
+        assert!(!s.reactor.established);
+        assert!(s.flags.contains(&Flag::SalvageUnlocked)); // not Cold -> salvage unlocked at new-game
+        assert!(!s.flags.contains(&Flag::CoreEstablished)); // below establish -> not yet established
     }
 
     #[test]

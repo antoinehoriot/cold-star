@@ -150,4 +150,19 @@ mod tests {
         let tampered = b64.encode(&framed);
         assert_eq!(decode(&tampered), Err(SaveError::Version(999)));
     }
+
+    #[test]
+    fn v1_payload_is_rejected() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        // M0 saves carry schema version 1. Frame a valid v2 save, then set the
+        // framed version field (bytes 4..8) to 1. CRC covers only the compressed
+        // body (bytes 12..), so the checksum still matches and decode reaches the
+        // version dispatch, which must cleanly reject (not crash / mis-deserialize).
+        let encoded = encode(&sample()).unwrap();
+        let mut framed = b64.decode(&encoded).unwrap();
+        framed[4..8].copy_from_slice(&1u32.to_le_bytes());
+        let tampered = b64.encode(&framed);
+        assert_eq!(decode(&tampered), Err(SaveError::Version(1)));
+    }
 }
