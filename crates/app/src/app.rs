@@ -26,7 +26,9 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 #[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
-    let state = use_signal(|| GameState::new(&tuning.read(), 1));
+    let mut state = use_signal(|| GameState::new(&tuning.read(), 1));
+
+    crate::tick::use_tick_driver(state, tuning, 1000.0, 8 * 60 * 60);
 
     let r = state.read();
     let charge = r.reactor.charge;
@@ -41,7 +43,14 @@ pub fn App() -> Element {
             div { class: "readout", "REACTOR CORE" }
             div { class: "charge", "{charge:.0} / {capacity:.0}" }
             div { class: "status status-{status}", "{status}" }
-            button { class: "act", "Stoke the core" }
+            button {
+                class: "act",
+                onclick: move |_| {
+                    let t = tuning.read().clone();
+                    let _ = state.write().apply(&t, sim::state::Action::StokeCore);
+                },
+                "Stoke the core"
+            }
             button { class: "act ghost", "Copy save link" }
         }
     }
