@@ -23,7 +23,8 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .act { margin-top: 1.2rem; margin-right: .6rem; padding: .6rem 1.1rem;
   background: #0c1822; color: #c7d3dd; border: 1px solid #1d4456;
   border-radius: 4px; font-family: inherit; cursor: pointer; }
-.act:hover { background: #112433; }
+.act:hover:not(:disabled) { background: #112433; }
+.act:disabled { opacity: .35; cursor: not-allowed; }
 .act.ghost { opacity: .7; }
 .origins { display: flex; gap: 1rem; flex-wrap: wrap; }
 .origin-card { flex: 1 1 160px; padding: 1rem; border: 1px solid #1d4456;
@@ -101,6 +102,7 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
     let crew_arrived = gs.flags.contains(&Flag::CrewArrived);
     let scrap = gs.resources.scrap;
     let crew = gs.crew.count;
+    let salvage_cooldown = gs.salvage_cooldown;
     let source_name = gs.origin.source_name.clone();
     let log_lines: Vec<(u64, String)> = gs
         .log
@@ -133,7 +135,12 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
             button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
         } else {
             if salvage_unlocked {
-                button { class: "act", onclick: move |_| act(Action::Salvage), "Salvage" }
+                button {
+                    class: "act",
+                    disabled: salvage_cooldown > 0,
+                    onclick: move |_| act(Action::Salvage),
+                    if salvage_cooldown > 0 { "Salvage ({salvage_cooldown}s)" } else { "Salvage" }
+                }
                 button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
             }
             if source_available && !source_active {

@@ -38,6 +38,8 @@ pub struct GameState {
     pub crew: Crew,
     pub flags: BTreeSet<Flag>,
     pub log: Log,
+    /// Ticks remaining before Salvage can be used again (0 = ready).
+    pub salvage_cooldown: u32,
 }
 
 impl GameState {
@@ -67,6 +69,7 @@ impl GameState {
             crew: Crew::default(),
             flags: BTreeSet::new(),
             log: Log::default(),
+            salvage_cooldown: 0,
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -87,6 +90,10 @@ impl GameState {
             let prev_status = self.reactor.status;
             self.reactor.tick(tuning);
             self.tick += 1;
+
+            if self.salvage_cooldown > 0 {
+                self.salvage_cooldown -= 1;
+            }
 
             if self.flags.contains(&Flag::CrewSourceActive) && self.crew.tick_arrival(tuning) {
                 self.log_flavor("crew_arrived", tuning);
@@ -122,7 +129,11 @@ impl GameState {
                 Ok(())
             }
             Action::Salvage => {
+                if self.salvage_cooldown > 0 {
+                    return Err(Rejected("salvage is on cooldown"));
+                }
                 self.resources.add_scrap(tuning.salvage_yield);
+                self.salvage_cooldown = tuning.salvage_cooldown_ticks;
                 self.update_disclosure_flags(tuning);
                 Ok(())
             }
@@ -190,6 +201,14 @@ mod tests {
         Tuning::default()
     }
 
+    /// Salvage `times`, clearing the cooldown between each by advancing time.
+    fn bank(s: &mut GameState, tn: &Tuning, times: u32) {
+        for _ in 0..times {
+            s.apply(tn, Action::Salvage).unwrap();
+            s.advance(tn, tn.salvage_cooldown_ticks as u64);
+        }
+    }
+
     #[test]
     fn new_game_is_versioned() {
         let s = GameState::new(&t(), 123);
@@ -244,10 +263,9 @@ mod tests {
         let tn = t();
         let mut s = GameState::new(&tn, 1);
         s.advance(&tn, 60); // drain charge below full
-        let before = s.reactor.charge;
-        s.apply(&tn, Action::Salvage).unwrap();
-        s.apply(&tn, Action::Salvage).unwrap(); // 10 scrap
+        bank(&mut s, &tn, 2); // 10 scrap (cooldown cleared between)
         assert_eq!(s.resources.scrap, 2.0 * tn.salvage_yield);
+        let before = s.reactor.charge;
         s.apply(&tn, Action::FeedCore).unwrap();
         assert_eq!(
             s.resources.scrap,
@@ -271,9 +289,7 @@ mod tests {
     fn active_source_produces_crew_and_trickle() {
         let tn = t();
         let mut s = GameState::new(&tn, 1);
-        for _ in 0..((tn.crew_source_cost / tn.salvage_yield) as u32) {
-            s.apply(&tn, Action::Salvage).unwrap();
-        }
+        bank(&mut s, &tn, (tn.crew_source_cost / tn.salvage_yield) as u32);
         s.apply(&tn, Action::ActivateCrewSource).unwrap();
         let scrap_at_activation = s.resources.scrap;
         s.advance(&tn, tn.arrival_interval as u64); // first crew arrives
@@ -289,9 +305,7 @@ mod tests {
     fn crew_never_exceeds_cap() {
         let tn = t();
         let mut s = GameState::new(&tn, 1);
-        for _ in 0..((tn.crew_source_cost / tn.salvage_yield) as u32) {
-            s.apply(&tn, Action::Salvage).unwrap();
-        }
+        bank(&mut s, &tn, (tn.crew_source_cost / tn.salvage_yield) as u32);
         s.apply(&tn, Action::ActivateCrewSource).unwrap();
         s.advance(&tn, (tn.arrival_interval as u64) * (tn.crew_cap as u64 + 3));
         assert_eq!(s.crew.count, tn.crew_cap);
@@ -350,9 +364,7 @@ mod tests {
             s.apply(&tn, Action::ActivateCrewSource),
             Err(Rejected("the crew-source is not available yet"))
         );
-        for _ in 0..(tn.crew_source_cost / tn.salvage_yield) as u32 {
-            s.apply(&tn, Action::Salvage).unwrap();
-        }
+        bank(&mut s, &tn, (tn.crew_source_cost / tn.salvage_yield) as u32);
         assert!(s.flags.contains(&Flag::CrewSourceAvailable));
         assert!(s.apply(&tn, Action::ActivateCrewSource).is_ok());
         assert!(s.flags.contains(&Flag::CrewSourceActive));
@@ -360,5 +372,34 @@ mod tests {
             s.apply(&tn, Action::ActivateCrewSource),
             Err(Rejected("the crew-source is already active"))
         );
+    }
+
+    #[test]
+    fn salvage_sets_cooldown_and_blocks_repeat() {
+        let tn = t();
+        let mut s = GameState::new(&tn, 1);
+        assert!(s.apply(&tn, Action::Salvage).is_ok());
+        assert_eq!(s.resources.scrap, tn.salvage_yield);
+        assert_eq!(s.salvage_cooldown, tn.salvage_cooldown_ticks);
+        // Immediate repeat is rejected while cooling — no scrap gained.
+        assert_eq!(
+            s.apply(&tn, Action::Salvage),
+            Err(Rejected("salvage is on cooldown"))
+        );
+        assert_eq!(s.resources.scrap, tn.salvage_yield);
+        // After the cooldown elapses, salvage is allowed again.
+        s.advance(&tn, tn.salvage_cooldown_ticks as u64);
+        assert_eq!(s.salvage_cooldown, 0);
+        assert!(s.apply(&tn, Action::Salvage).is_ok());
+        assert_eq!(s.resources.scrap, 2.0 * tn.salvage_yield);
+    }
+
+    #[test]
+    fn salvage_cooldown_decrements_each_tick() {
+        let tn = t();
+        let mut s = GameState::new(&tn, 1);
+        s.apply(&tn, Action::Salvage).unwrap();
+        s.advance(&tn, 2);
+        assert_eq!(s.salvage_cooldown, tn.salvage_cooldown_ticks - 2);
     }
 }

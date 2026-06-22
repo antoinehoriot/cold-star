@@ -159,6 +159,7 @@ mod tests {
         assert_eq!(t.feed_cost_scrap, 10.0);
         assert_eq!(t.feed_charge, 20.0);
         assert_eq!(t.salvage_yield, 5.0);
+        assert_eq!(t.salvage_cooldown_ticks, 5);
         assert_eq!(t.crew_source_cost, 30.0);
         assert_eq!(t.crew_cap, 4);
         assert_eq!(t.arrival_interval, 30);

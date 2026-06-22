@@ -24,6 +24,8 @@ pub struct Tuning {
     pub feed_charge: f64,
     /// Scrap gained by one Salvage action.
     pub salvage_yield: f64,
+    /// Ticks the Salvage action is on cooldown after each use (0 = no cooldown).
+    pub salvage_cooldown_ticks: u32,
 
     // Crew
     /// Scrap cost to activate the crew-source.
@@ -51,6 +53,7 @@ impl Default for Tuning {
             feed_cost_scrap: 10.0,
             feed_charge: 20.0,
             salvage_yield: 5.0,
+            salvage_cooldown_ticks: 5,
             crew_source_cost: 30.0,
             crew_cap: 4,
             arrival_interval: 30,
