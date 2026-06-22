@@ -55,6 +55,16 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .status-Straining { color: #e08a4a; }
 .status-Critical { color: #d66f6f; font-weight: 600; }
 .muted { color: #5b7686; font-size: .8rem; }
+.job-row, .build-row, .prio-row { display: flex; justify-content: space-between; align-items: center; font-size: .85rem; padding: .25rem 0; gap: .5rem; }
+.mini { padding: .15rem .5rem; min-width: 1.6rem; background: #0c1822; color: #c7d3dd; border: 1px solid #1d4456; border-radius: 3px; font-family: inherit; cursor: pointer; }
+.mini:hover:not(:disabled) { background: #112433; }
+.mini:disabled { opacity: .3; cursor: not-allowed; }
+.badge { font-size: .7rem; padding: .05rem .4rem; border-radius: 3px; margin-left: .4rem; }
+.badge-power { color: #e0a24a; border: 1px solid #5a4326; }
+.badge-input { color: #6f9fd6; border: 1px solid #264a5a; }
+.idle { color: #6fd6a0; font-size: .8rem; margin-bottom: .5rem; }
+.starving { color: #d66f6f; font-size: .8rem; margin-bottom: .5rem; }
+.cost { color: #9fb3c2; font-size: .78rem; }
 ";
 
 #[component]
@@ -103,6 +113,89 @@ fn ResourcesPanel(rows: Vec<(String, f64, f64, f64)>) -> Element {
                         } else if net < 0.0 {
                             span { class: "res-net-down", "\u{25bc}{(-net):.1}" }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn JobPanel(
+    idle: u32,
+    starving: bool,
+    rows: Vec<(sim::job::JobId, String, u32, bool, &'static str)>,
+    on_assign: EventHandler<(sim::job::JobId, i32)>,
+) -> Element {
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "CREW" }
+            div { class: "idle", "Idle: {idle}" }
+            if starving { div { class: "starving", "crew starving \u{2014} rations short" } }
+            for (id, name, count, has_crew, dark) in rows {
+                div { class: "job-row",
+                    span {
+                        "{name} \u{d7}{count}"
+                        if has_crew && dark == "power" { span { class: "badge badge-power", "\u{23f8} no power" } }
+                        if has_crew && dark == "input" { span { class: "badge badge-input", "\u{25bd} no input" } }
+                    }
+                    span {
+                        button {
+                            class: "mini",
+                            disabled: count == 0,
+                            onclick: move |_| on_assign.call((id, -1)),
+                            "\u{2212}"
+                        }
+                        button {
+                            class: "mini",
+                            disabled: idle == 0,
+                            onclick: move |_| on_assign.call((id, 1)),
+                            "+"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn BuildMenu(
+    rows: Vec<(sim::module::ModuleId, String, String, u32)>,
+    on_build: EventHandler<sim::module::ModuleId>,
+) -> Element {
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "BUILD" }
+            for (id, name, cost, n) in rows {
+                div { class: "build-row",
+                    span {
+                        "{name}"
+                        if n > 0 { span { class: "muted", " ({n})" } }
+                        div { class: "cost", "{cost}" }
+                    }
+                    button { class: "mini", onclick: move |_| on_build.call(id), "build" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn PriorityPanel(
+    rows: Vec<(sim::priority::Consumer, String, bool, bool)>,
+    on_move: EventHandler<(sim::priority::Consumer, bool)>,
+) -> Element {
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "POWER PRIORITY" }
+            div { class: "muted", "higher = browns out last" }
+            for (c, name, is_first, is_last) in rows {
+                div { class: "prio-row",
+                    span { "{name}" }
+                    span {
+                        button { class: "mini", disabled: is_first, onclick: move |_| on_move.call((c, true)), "\u{25b2}" }
+                        button { class: "mini", disabled: is_last, onclick: move |_| on_move.call((c, false)), "\u{25bc}" }
                     }
                 }
             }
@@ -215,6 +308,67 @@ fn Console(
             )
         })
         .collect();
+    let idle = gs.crew.idle();
+    let starving = gs.telemetry.starving;
+    let job_rows: Vec<(sim::job::JobId, String, u32, bool, &'static str)> = jobs
+        .read()
+        .iter()
+        .filter(|j| j.gated_by.map(|g| gs.built_count(g) > 0).unwrap_or(true))
+        .map(|j| {
+            let count = gs.crew.assigned(j.id);
+            let dark = if count > 0
+                && gs
+                    .telemetry
+                    .paused
+                    .contains(&sim::priority::Consumer::Job(j.id))
+            {
+                "power"
+            } else if gs.telemetry.starved_input.contains(&j.id) {
+                "input"
+            } else {
+                ""
+            };
+            (j.id, j.name.clone(), count, count > 0, dark)
+        })
+        .collect();
+    let build_rows: Vec<(sim::module::ModuleId, String, String, u32)> = modules
+        .read()
+        .iter()
+        .filter(|m| {
+            let prereqs_ok = m.requires_modules.iter().all(|r| gs.built_count(*r) > 0);
+            let buildable_again = m.repeatable || gs.built_count(m.id) == 0;
+            prereqs_ok && buildable_again
+        })
+        .map(|m| {
+            let n = gs.built_count(m.id);
+            let cost = m
+                .cost
+                .iter()
+                .map(|(k, a)| format!("{:.0} {k:?}", a * m.cost_scaling.powi(n as i32)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            (m.id, m.name.clone(), cost, n)
+        })
+        .collect();
+    let prio_rows: Vec<(sim::priority::Consumer, String, bool, bool)> = {
+        let list = &gs.priority.0;
+        let last = list.len().saturating_sub(1);
+        list.iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let name = match c {
+                    sim::priority::Consumer::LifeSupport => "Life Support".to_string(),
+                    sim::priority::Consumer::Job(id) => jobs
+                        .read()
+                        .iter()
+                        .find(|j| j.id == *id)
+                        .map(|j| j.name.clone())
+                        .unwrap_or_else(|| format!("{id:?}")),
+                };
+                (*c, name, i == 0, i == last)
+            })
+            .collect()
+    };
     drop(snapshot);
 
     let mut act = move |action: Action| {
@@ -286,7 +440,46 @@ fn Console(
                     }
                 }
                 div { class: "col",
-                    // Right column (JobPanel / BuildMenu / PriorityPanel) — Task 5.
+                    JobPanel {
+                        idle,
+                        starving,
+                        rows: job_rows.clone(),
+                        on_assign: move |(job, delta)| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m };
+                            if let Some(gs) = state.write().as_mut() {
+                                let _ = gs.apply(&world, Action::AssignCrew { job, delta });
+                            }
+                        },
+                    }
+                    BuildMenu {
+                        rows: build_rows.clone(),
+                        on_build: move |id| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m };
+                            if let Some(gs) = state.write().as_mut() {
+                                let _ = gs.apply(&world, Action::Build(id));
+                            }
+                        },
+                    }
+                    if power_visible {
+                        PriorityPanel {
+                            rows: prio_rows.clone(),
+                            on_move: move |(consumer, up)| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m };
+                                if let Some(gs) = state.write().as_mut() {
+                                    let _ = gs.apply(&world, Action::SetPriority { consumer, up });
+                                }
+                            },
+                        }
+                    }
                 }
             }
         } else {
