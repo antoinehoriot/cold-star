@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod crew;
+pub mod economy;
 pub mod flags;
 pub mod job;
 pub mod log;
@@ -19,6 +20,7 @@ pub mod time;
 
 pub use config::Tuning;
 pub use crew::Crew;
+pub use economy::{EconomyReport, job_ready, run_economy};
 pub use flags::Flag;
 pub use job::{Job, JobId, JobRegistry, Recipe};
 pub use log::{Log, LogEntry};
