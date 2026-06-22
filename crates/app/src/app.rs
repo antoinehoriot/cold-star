@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use sim::Tuning;
+use sim::flags::Flag;
 use sim::origin::OriginDef;
 use sim::state::{Action, GameState};
 
@@ -94,7 +95,6 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
     let capacity = gs.reactor.capacity;
     let status = format!("{:?}", gs.reactor.status);
     let is_cold = gs.reactor.status == sim::reactor::ReactorStatus::Cold;
-    use sim::flags::Flag;
     let salvage_unlocked = gs.flags.contains(&Flag::SalvageUnlocked);
     let source_available = gs.flags.contains(&Flag::CrewSourceAvailable);
     let source_active = gs.flags.contains(&Flag::CrewSourceActive);
