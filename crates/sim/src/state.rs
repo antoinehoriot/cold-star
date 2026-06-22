@@ -79,12 +79,30 @@ impl GameState {
         self.origin.id
     }
 
-    /// Advance the simulation by `ticks` whole ticks. (Crew/flag/log advance
-    /// behaviors are added in the next task; here only the reactor decays.)
+    /// Advance the simulation by `ticks` whole ticks: reactor decay, crew
+    /// arrivals + auto-salvage trickle (while the source is active), disclosure
+    /// flags, and transition log lines.
     pub fn advance(&mut self, tuning: &Tuning, ticks: u64) {
         for _ in 0..ticks {
+            let prev_status = self.reactor.status;
             self.reactor.tick(tuning);
             self.tick += 1;
+
+            if self.flags.contains(&Flag::CrewSourceActive) && self.crew.tick_arrival(tuning) {
+                self.log_flavor("crew_arrived", tuning);
+            }
+            let trickle = self.crew.trickle(tuning);
+            if trickle > 0.0 {
+                self.resources.add_scrap(trickle);
+            }
+
+            if self.reactor.status != prev_status {
+                match self.reactor.status {
+                    ReactorStatus::Failing => self.log_flavor("failing", tuning),
+                    ReactorStatus::Cold => self.log_flavor("cold", tuning),
+                    _ => {}
+                }
+            }
             self.update_disclosure_flags(tuning);
         }
     }
@@ -245,6 +263,61 @@ mod tests {
             s.apply(&tn, Action::FeedCore),
             Err(Rejected("not enough scrap to feed the core"))
         );
+    }
+
+    #[test]
+    fn active_source_produces_crew_and_trickle() {
+        let tn = t();
+        let mut s = GameState::new(&tn, 1);
+        for _ in 0..((tn.crew_source_cost / tn.salvage_yield) as u32) {
+            s.apply(&tn, Action::Salvage).unwrap();
+        }
+        s.apply(&tn, Action::ActivateCrewSource).unwrap();
+        let scrap_at_activation = s.resources.scrap;
+        s.advance(&tn, tn.arrival_interval as u64); // first crew arrives
+        assert_eq!(s.crew.count, 1);
+        assert!(s.flags.contains(&Flag::CrewArrived));
+        // Trickle added scrap over those ticks (count was >0 only after arrival,
+        // so at least the post-arrival ticks contribute; assert it grew).
+        s.advance(&tn, 10);
+        assert!(s.resources.scrap > scrap_at_activation);
+    }
+
+    #[test]
+    fn crew_never_exceeds_cap() {
+        let tn = t();
+        let mut s = GameState::new(&tn, 1);
+        for _ in 0..((tn.crew_source_cost / tn.salvage_yield) as u32) {
+            s.apply(&tn, Action::Salvage).unwrap();
+        }
+        s.apply(&tn, Action::ActivateCrewSource).unwrap();
+        s.advance(&tn, (tn.arrival_interval as u64) * (tn.crew_cap as u64 + 3));
+        assert_eq!(s.crew.count, tn.crew_cap);
+    }
+
+    #[test]
+    fn failing_and_cold_emit_log_lines() {
+        let tn = t();
+        // Cold-start origin with flavor so transitions log.
+        let origin = OriginDef {
+            flavor: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("failing".to_string(), "FAILING".to_string());
+                m.insert("cold".to_string(), "COLD".to_string());
+                m
+            },
+            start: crate::origin::OriginStart {
+                scrap: 0.0,
+                reactor_capacity: 100.0,
+                reactor_charge: 100.0,
+            },
+            ..default_origin_def(&tn)
+        };
+        let mut s = GameState::new_with_origin(&origin, &tn, 1);
+        s.advance(&tn, 100); // full -> Failing -> Cold
+        let texts: Vec<_> = s.log.entries().iter().map(|e| e.text.clone()).collect();
+        assert!(texts.iter().any(|x| x == "FAILING"));
+        assert!(texts.iter().any(|x| x == "COLD"));
     }
 
     #[test]
