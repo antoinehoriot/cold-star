@@ -1,8 +1,9 @@
-//! The reactor — the heartbeat. A 4-state FSM driven by charge level. The
-//! `established` latch flips true once charge first reaches the establish
-//! threshold and resets only when the core goes Cold; it separates the
-//! climbing-from-cold "Igniting" phase from a running core that has dipped low
-//! ("Failing"). No Draw budget in M1 — Straining/Critical arrive in M2.
+//! The reactor — the heartbeat. A 6-state FSM driven by charge level and
+//! overdraw. The `established` latch flips true once charge first reaches the
+//! establish threshold and resets only when the core goes Cold; it separates
+//! the climbing-from-cold "Igniting" phase from a running core that has dipped
+//! low ("Failing"). With overdraw (Draw > generation) the low-charge statuses
+//! become "Straining" (above failing) and "Critical" (below failing).
 
 use crate::config::Tuning;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ pub enum ReactorStatus {
     Igniting,
     Stable,
     Failing,
+    Straining,
+    Critical,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -21,6 +24,7 @@ pub struct Reactor {
     pub capacity: f64,
     pub status: ReactorStatus,
     pub established: bool,
+    pub max_output: f64,
 }
 
 impl Reactor {
@@ -36,6 +40,7 @@ impl Reactor {
             capacity,
             status: ReactorStatus::Cold,
             established: false,
+            max_output: tuning.reactor_base_max_output,
         };
         r.update_status(tuning);
         r
@@ -59,7 +64,19 @@ impl Reactor {
         self.update_status(tuning);
     }
 
+    /// Set charge from the power resolution and recompute status. `overdrawn`
+    /// is true when total Draw exceeded generation this tick (charge falling
+    /// from overdraw rather than under-fuelling).
+    pub fn set_from_power(&mut self, new_charge: f64, overdrawn: bool, tuning: &Tuning) {
+        self.charge = new_charge.clamp(0.0, self.capacity);
+        self.update_status_power(overdrawn, tuning);
+    }
+
     fn update_status(&mut self, tuning: &Tuning) {
+        self.update_status_power(false, tuning);
+    }
+
+    fn update_status_power(&mut self, overdrawn: bool, tuning: &Tuning) {
         if self.charge <= 0.0 {
             self.status = ReactorStatus::Cold;
             self.established = false;
@@ -72,6 +89,12 @@ impl Reactor {
         }
         self.status = if !self.established {
             ReactorStatus::Igniting
+        } else if overdrawn {
+            if self.charge < failing {
+                ReactorStatus::Critical
+            } else {
+                ReactorStatus::Straining
+            }
         } else if self.charge < failing {
             ReactorStatus::Failing
         } else {
@@ -144,5 +167,35 @@ mod tests {
         assert_eq!(r.status, ReactorStatus::Failing);
         r.feed(40.0, &tn); // 55 -> Stable
         assert_eq!(r.status, ReactorStatus::Stable);
+    }
+
+    #[test]
+    fn overdraw_above_failing_is_straining() {
+        let tn = t();
+        let mut r = Reactor::new(&tn); // 100, established
+        r.set_from_power(80.0, true, &tn);
+        assert_eq!(r.status, ReactorStatus::Straining);
+    }
+
+    #[test]
+    fn overdraw_below_failing_is_critical() {
+        let tn = t();
+        let mut r = Reactor::new(&tn);
+        r.set_from_power(10.0, true, &tn); // below failing (20)
+        assert_eq!(r.status, ReactorStatus::Critical);
+    }
+
+    #[test]
+    fn under_fuelled_low_charge_is_failing_not_straining() {
+        let tn = t();
+        let mut r = Reactor::new(&tn);
+        r.set_from_power(10.0, false, &tn);
+        assert_eq!(r.status, ReactorStatus::Failing);
+    }
+
+    #[test]
+    fn new_reactor_has_base_max_output() {
+        let r = Reactor::new(&t());
+        assert_eq!(r.max_output, t().reactor_base_max_output);
     }
 }
