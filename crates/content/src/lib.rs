@@ -91,6 +91,7 @@ mod tests {
     fn loads_expanded_m1_tuning() {
         let t = load().unwrap();
         assert_eq!(t.reactor_capacity, 100.0);
+        assert_eq!(t.reactor_drain_per_tick, 1.0);
         assert_eq!(t.reactor_establish_threshold_frac, 0.5);
         assert_eq!(t.reactor_failing_threshold_frac, 0.2);
         assert_eq!(t.reactor_ignition_seed, 10.0);
