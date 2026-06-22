@@ -1,11 +1,13 @@
 use dioxus::prelude::*;
 use sim::Tuning;
+use sim::origin::OriginDef;
+use sim::state::{Action, GameState};
 
 const CSS: &str = "
 :root { color-scheme: dark; }
 body { margin: 0; background: #05070a; color: #c7d3dd;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.console { max-width: 560px; margin: 8vh auto; padding: 2rem;
+.console { max-width: 620px; margin: 7vh auto; padding: 2rem;
   border: 1px solid #16313f; border-radius: 6px; background: #070b10;
   box-shadow: 0 0 40px rgba(40,120,160,.08); }
 .title { letter-spacing: .4em; font-weight: 600; color: #6fb7d6; margin: 0 0 1.5rem; }
@@ -14,46 +16,131 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .status { font-size: .8rem; letter-spacing: .2em; }
 .status-Stable { color: #6fd6a0; }
 .status-Igniting { color: #d6c46f; }
+.status-Failing { color: #e0a24a; }
 .status-Cold { color: #d66f6f; }
-.act { margin-top: 1.5rem; margin-right: .6rem; padding: .6rem 1.1rem;
+.res { margin-top: .8rem; font-size: .9rem; color: #9fb3c2; }
+.act { margin-top: 1.2rem; margin-right: .6rem; padding: .6rem 1.1rem;
   background: #0c1822; color: #c7d3dd; border: 1px solid #1d4456;
   border-radius: 4px; font-family: inherit; cursor: pointer; }
 .act:hover { background: #112433; }
 .act.ghost { opacity: .7; }
+.origins { display: flex; gap: 1rem; flex-wrap: wrap; }
+.origin-card { flex: 1 1 160px; padding: 1rem; border: 1px solid #1d4456;
+  border-radius: 5px; background: #0a141c; cursor: pointer; }
+.origin-card:hover { background: #112433; border-color: #2f6a80; }
+.origin-name { color: #6fb7d6; letter-spacing: .15em; margin-bottom: .5rem; }
+.origin-intro { font-size: .82rem; color: #9fb3c2; line-height: 1.4; }
+.log { margin-top: 1.5rem; border-top: 1px solid #16313f; padding-top: .8rem;
+  max-height: 220px; overflow-y: auto; font-size: .82rem; line-height: 1.5; }
+.log-line { color: #8aa0b0; }
 ";
 
 #[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
-    let mut state = use_signal(|| crate::persist::load_initial(&tuning.read()));
+    let origins = use_signal(|| content::load_origins().unwrap_or_default());
+    let state = use_signal(|| crate::persist::load_initial(&tuning.read()));
 
     crate::tick::use_tick_driver(state, tuning, 1000.0, 8 * 60 * 60);
 
-    let r = state.read();
-    let charge = r.reactor.charge;
-    let capacity = r.reactor.capacity;
-    let status = format!("{:?}", r.reactor.status);
-    drop(r);
+    let has_game = state.read().is_some();
 
     rsx! {
         style { dangerous_inner_html: CSS }
         main { class: "console",
             h1 { class: "title", "COLD STAR" }
-            div { class: "readout", "REACTOR CORE" }
-            div { class: "charge", "{charge:.0} / {capacity:.0}" }
-            div { class: "status status-{status}", "{status}" }
+            if has_game {
+                Console { state, tuning }
+            } else {
+                OriginSelect { state, tuning, origins }
+            }
+        }
+    }
+}
+
+#[component]
+fn OriginSelect(
+    mut state: Signal<Option<GameState>>,
+    tuning: Signal<Tuning>,
+    origins: Signal<Vec<OriginDef>>,
+) -> Element {
+    rsx! {
+        div { class: "readout", "CHOOSE AN ORIGIN" }
+        div { class: "origins",
+            for o in origins.read().iter().cloned() {
+                div {
+                    class: "origin-card",
+                    onclick: move |_| {
+                        let t = tuning.read().clone();
+                        let seed = crate::persist::seed_from_clock();
+                        let gs = GameState::new_with_origin(&o, &t, seed);
+                        state.set(Some(gs));
+                    },
+                    div { class: "origin-name", "{o.name}" }
+                    div { class: "origin-intro", "{o.intro}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Element {
+    let snapshot = state.read();
+    let Some(gs) = snapshot.as_ref() else {
+        return rsx! { div {} };
+    };
+    let charge = gs.reactor.charge;
+    let capacity = gs.reactor.capacity;
+    let status = format!("{:?}", gs.reactor.status);
+    let is_cold = gs.reactor.status == sim::reactor::ReactorStatus::Cold;
+    let scrap = gs.resources.scrap;
+    let crew = gs.crew.count;
+    let source_name = gs.origin.source_name.clone();
+    let log_lines: Vec<(u64, String)> = gs
+        .log
+        .entries()
+        .iter()
+        .rev()
+        .map(|e| (e.tick, e.text.clone()))
+        .collect();
+    drop(snapshot);
+
+    let mut act = move |action: Action| {
+        let t = tuning.read().clone();
+        if let Some(gs) = state.write().as_mut() {
+            let _ = gs.apply(&t, action);
+        }
+    };
+
+    rsx! {
+        div { class: "readout", "REACTOR CORE" }
+        div { class: "charge", "{charge:.0} / {capacity:.0}" }
+        div { class: "status status-{status}", "{status}" }
+        div { class: "res", "Scrap: {scrap:.0}   \u{00b7}   Crew: {crew}" }
+
+        if is_cold {
+            button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
+        } else {
+            button { class: "act", onclick: move |_| act(Action::Salvage), "Salvage" }
+            button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
             button {
                 class: "act",
-                onclick: move |_| {
-                    let t = tuning.read().clone();
-                    let _ = state.write().apply(&t, sim::state::Action::Salvage);
-                },
-                "Salvage scrap"
+                onclick: move |_| act(Action::ActivateCrewSource),
+                "Activate {source_name}"
             }
-            button {
-                class: "act ghost",
-                onclick: move |_| crate::persist::copy_link(&state.read()),
-                "Copy save link"
+        }
+        button {
+            class: "act ghost",
+            onclick: move |_| {
+                if let Some(gs) = state.read().as_ref() { crate::persist::copy_link(gs); }
+            },
+            "Copy save link"
+        }
+
+        div { class: "log",
+            for (tick, text) in log_lines {
+                div { class: "log-line", "[{tick}] {text}" }
             }
         }
     }

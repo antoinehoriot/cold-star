@@ -1,6 +1,6 @@
 //! The wall-clock tick driver. This is the ONLY place real time is read.
 //! It converts elapsed time into whole ticks (via the pure `sim` helper) and
-//! advances the simulation, then triggers a save.
+//! advances the simulation (if a game exists), then triggers a save.
 
 use dioxus::prelude::*;
 use sim::Tuning;
@@ -10,7 +10,7 @@ use sim::time::ticks_for_elapsed;
 use crate::persist;
 
 pub fn use_tick_driver(
-    mut state: Signal<GameState>,
+    mut state: Signal<Option<GameState>>,
     tuning: Signal<Tuning>,
     tick_ms: f64,
     offline_cap: u64,
@@ -24,10 +24,14 @@ pub fn use_tick_driver(
             if n > 0 {
                 {
                     let t = tuning.read();
-                    state.write().advance(&t, n);
+                    if let Some(gs) = state.write().as_mut() {
+                        gs.advance(&t, n);
+                    }
                 }
                 anchor += n as f64 * tick_ms;
-                persist::save(&state.read());
+                if let Some(gs) = state.read().as_ref() {
+                    persist::save(gs);
+                }
             }
         }
     });

@@ -12,8 +12,9 @@ const KEY_SAVE_AT: &str = "coldstar.save_at";
 const TICK_MS: f64 = 1000.0;
 const OFFLINE_CAP: u64 = 8 * 60 * 60;
 
-/// Choose the starting state: shared link > local save (+catch-up) > new game.
-pub fn load_initial(tuning: &Tuning) -> GameState {
+/// Choose the starting state: shared link > local save (+catch-up) > none.
+/// `None` means there is no game yet — the UI shows origin select.
+pub fn load_initial(tuning: &Tuning) -> Option<GameState> {
     if let Some(payload) = link_payload() {
         match save::decode(&payload) {
             Ok(state) => {
@@ -21,7 +22,7 @@ pub fn load_initial(tuning: &Tuning) -> GameState {
                     "Load the shared game from this link? Your local save is kept until you next save.",
                 ) {
                     clear_fragment();
-                    return state;
+                    return Some(state);
                 }
             }
             Err(_) => alert("This save link is invalid or corrupted."),
@@ -34,11 +35,11 @@ pub fn load_initial(tuning: &Tuning) -> GameState {
                 let n = ticks_for_elapsed(js_sys::Date::now() - saved_at, TICK_MS, OFFLINE_CAP);
                 state.advance(tuning, n);
             }
-            return state;
+            return Some(state);
         }
     }
 
-    GameState::new(tuning, seed_from_clock())
+    None
 }
 
 /// Persist the current state plus a timestamp for offline catch-up.
@@ -92,6 +93,6 @@ fn alert(msg: &str) {
     }
 }
 
-fn seed_from_clock() -> u64 {
+pub fn seed_from_clock() -> u64 {
     js_sys::Date::now().to_bits()
 }
