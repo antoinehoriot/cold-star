@@ -20,17 +20,19 @@ pub fn load() -> Result<Tuning, ContentError> {
 }
 
 pub fn validate(t: &Tuning) -> Result<(), ContentError> {
-    if t.reactor_capacity <= 0.0 {
-        return Err(ContentError::Invalid("reactor_capacity must be > 0".into()));
-    }
-    if t.reactor_drain_per_tick < 0.0 {
+    if !t.reactor_capacity.is_finite() || t.reactor_capacity <= 0.0 {
         return Err(ContentError::Invalid(
-            "reactor_drain_per_tick must be >= 0".into(),
+            "reactor_capacity must be a finite value > 0".into(),
         ));
     }
-    if t.reactor_stoke_amount < 0.0 {
+    if !t.reactor_drain_per_tick.is_finite() || t.reactor_drain_per_tick < 0.0 {
         return Err(ContentError::Invalid(
-            "reactor_stoke_amount must be >= 0".into(),
+            "reactor_drain_per_tick must be a finite value >= 0".into(),
+        ));
+    }
+    if !t.reactor_stoke_amount.is_finite() || t.reactor_stoke_amount < 0.0 {
+        return Err(ContentError::Invalid(
+            "reactor_stoke_amount must be a finite value >= 0".into(),
         ));
     }
     Ok(())
@@ -61,6 +63,24 @@ mod tests {
     fn rejects_negative_drain() {
         let bad = Tuning {
             reactor_drain_per_tick: -1.0,
+            ..Tuning::default()
+        };
+        assert!(matches!(validate(&bad), Err(ContentError::Invalid(_))));
+    }
+
+    #[test]
+    fn rejects_negative_stoke_amount() {
+        let bad = Tuning {
+            reactor_stoke_amount: -1.0,
+            ..Tuning::default()
+        };
+        assert!(matches!(validate(&bad), Err(ContentError::Invalid(_))));
+    }
+
+    #[test]
+    fn rejects_nan_capacity() {
+        let bad = Tuning {
+            reactor_capacity: f64::NAN,
             ..Tuning::default()
         };
         assert!(matches!(validate(&bad), Err(ContentError::Invalid(_))));
