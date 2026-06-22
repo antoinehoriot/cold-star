@@ -140,4 +140,14 @@ mod tests {
         assert_eq!(out.new_charge, 48.0); // 50 - baseline 2
         assert_eq!(out.active_draw, 2.0);
     }
+
+    #[test]
+    fn baseline_consumes_budget_before_consumers() {
+        // budget = gen 5 + charge 0 = 5. baseline 2 is taken first, leaving 3.
+        // A single consumer of draw 4 does NOT fit (2+4 > 5) and is paused,
+        // even though its draw (4) is below generation (5).
+        let out = resolve_power(&[c(JobId::Refiner, 4.0)], 5.0, 0.0, 100.0, 100.0, 0.5, 2.0);
+        assert!(out.paused.contains(&Consumer::Job(JobId::Refiner)));
+        assert_eq!(out.active_draw, 2.0); // only the baseline ran
+    }
 }
