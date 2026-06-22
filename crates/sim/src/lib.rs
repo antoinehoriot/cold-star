@@ -19,6 +19,6 @@ pub use flags::Flag;
 pub use log::{Log, LogEntry};
 pub use origin::{Origin, OriginDef};
 pub use reactor::{Reactor, ReactorStatus};
-pub use resources::Resources;
+pub use resources::{ResourceKind, Resources};
 pub use rng::Rng;
 pub use state::{Action, GameState, Rejected, SAVE_VERSION};

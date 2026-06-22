@@ -65,6 +65,7 @@ impl GameState {
             reactor,
             resources: Resources {
                 scrap: origin.start.scrap,
+                ..Resources::default()
             },
             crew: Crew::default(),
             flags: BTreeSet::new(),
