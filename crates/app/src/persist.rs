@@ -3,8 +3,10 @@
 
 use gloo_storage::{LocalStorage, Storage};
 use sim::Tuning;
+use sim::job::{Job, JobRegistry};
+use sim::module::{Module, ModuleRegistry};
 use sim::save;
-use sim::state::GameState;
+use sim::state::{GameState, World};
 use sim::time::ticks_for_elapsed;
 
 const KEY_SAVE: &str = "coldstar.save";
@@ -14,7 +16,7 @@ const OFFLINE_CAP: u64 = 8 * 60 * 60;
 
 /// Choose the starting state: shared link > local save (+catch-up) > none.
 /// `None` means there is no game yet — the UI shows origin select.
-pub fn load_initial(tuning: &Tuning) -> Option<GameState> {
+pub fn load_initial(tuning: &Tuning, jobs: &[Job], modules: &[Module]) -> Option<GameState> {
     if let Some(payload) = link_payload() {
         match save::decode(&payload) {
             Ok(state) => {
@@ -33,7 +35,14 @@ pub fn load_initial(tuning: &Tuning) -> Option<GameState> {
         if let Ok(mut state) = save::decode(&encoded) {
             if let Ok(saved_at) = LocalStorage::get::<f64>(KEY_SAVE_AT) {
                 let n = ticks_for_elapsed(js_sys::Date::now() - saved_at, TICK_MS, OFFLINE_CAP);
-                state.advance(tuning, n);
+                let j = JobRegistry(jobs.to_vec());
+                let m = ModuleRegistry(modules.to_vec());
+                let world = World {
+                    tuning,
+                    jobs: &j,
+                    modules: &m,
+                };
+                state.advance(&world, n);
             }
             return Some(state);
         }

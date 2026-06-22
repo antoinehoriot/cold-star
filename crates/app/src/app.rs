@@ -1,8 +1,10 @@
 use dioxus::prelude::*;
 use sim::Tuning;
 use sim::flags::Flag;
+use sim::job::JobRegistry;
+use sim::module::ModuleRegistry;
 use sim::origin::OriginDef;
-use sim::state::{Action, GameState};
+use sim::state::{Action, GameState, World};
 
 const CSS: &str = "
 :root { color-scheme: dark; }
@@ -40,10 +42,13 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 #[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
+    let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
+    let modules = use_signal(|| content::load_modules().map(|r| r.0).unwrap_or_default());
     let origins = use_signal(|| content::load_origins().unwrap_or_default());
-    let state = use_signal(|| crate::persist::load_initial(&tuning.read()));
+    let state =
+        use_signal(|| crate::persist::load_initial(&tuning.read(), &jobs.read(), &modules.read()));
 
-    crate::tick::use_tick_driver(state, tuning, 1000.0, 8 * 60 * 60);
+    crate::tick::use_tick_driver(state, tuning, jobs, modules, 1000.0, 8 * 60 * 60);
 
     let has_game = state.read().is_some();
 
@@ -52,9 +57,9 @@ pub fn App() -> Element {
         main { class: "console",
             h1 { class: "title", "COLD STAR" }
             if has_game {
-                Console { state, tuning }
+                Console { state, tuning, jobs, modules }
             } else {
-                OriginSelect { state, tuning, origins }
+                OriginSelect { state, tuning, jobs, modules, origins }
             }
         }
     }
@@ -64,6 +69,8 @@ pub fn App() -> Element {
 fn OriginSelect(
     mut state: Signal<Option<GameState>>,
     tuning: Signal<Tuning>,
+    jobs: Signal<Vec<sim::job::Job>>,
+    modules: Signal<Vec<sim::module::Module>>,
     origins: Signal<Vec<OriginDef>>,
 ) -> Element {
     rsx! {
@@ -74,8 +81,11 @@ fn OriginSelect(
                     class: "origin-card",
                     onclick: move |_| {
                         let t = tuning.read().clone();
+                        let j = JobRegistry(jobs.read().clone());
+                        let m = ModuleRegistry(modules.read().clone());
+                        let world = World { tuning: &t, jobs: &j, modules: &m };
                         let seed = crate::persist::seed_from_clock();
-                        let gs = GameState::new_with_origin(&o, &t, seed);
+                        let gs = GameState::new_with_origin(&o, &world, seed);
                         state.set(Some(gs));
                     },
                     div { class: "origin-name", "{o.name}" }
@@ -87,7 +97,12 @@ fn OriginSelect(
 }
 
 #[component]
-fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Element {
+fn Console(
+    mut state: Signal<Option<GameState>>,
+    tuning: Signal<Tuning>,
+    jobs: Signal<Vec<sim::job::Job>>,
+    modules: Signal<Vec<sim::module::Module>>,
+) -> Element {
     let snapshot = state.read();
     let Some(gs) = snapshot.as_ref() else {
         return rsx! { div {} };
@@ -101,7 +116,7 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
     let source_active = gs.flags.contains(&Flag::CrewSourceActive);
     let crew_arrived = gs.flags.contains(&Flag::CrewArrived);
     let scrap = gs.resources.scrap;
-    let crew = gs.crew.count;
+    let crew = gs.crew.total;
     let salvage_cooldown = gs.salvage_cooldown;
     let source_name = gs.origin.source_name.clone();
     let log_lines: Vec<(u64, String)> = gs
@@ -115,8 +130,15 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
 
     let mut act = move |action: Action| {
         let t = tuning.read().clone();
+        let j = JobRegistry(jobs.read().clone());
+        let m = ModuleRegistry(modules.read().clone());
+        let world = World {
+            tuning: &t,
+            jobs: &j,
+            modules: &m,
+        };
         if let Some(gs) = state.write().as_mut() {
-            let _ = gs.apply(&t, action);
+            let _ = gs.apply(&world, action);
         }
     };
 
