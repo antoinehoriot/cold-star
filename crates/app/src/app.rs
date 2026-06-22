@@ -94,6 +94,11 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
     let capacity = gs.reactor.capacity;
     let status = format!("{:?}", gs.reactor.status);
     let is_cold = gs.reactor.status == sim::reactor::ReactorStatus::Cold;
+    use sim::flags::Flag;
+    let salvage_unlocked = gs.flags.contains(&Flag::SalvageUnlocked);
+    let source_available = gs.flags.contains(&Flag::CrewSourceAvailable);
+    let source_active = gs.flags.contains(&Flag::CrewSourceActive);
+    let crew_arrived = gs.flags.contains(&Flag::CrewArrived);
     let scrap = gs.resources.scrap;
     let crew = gs.crew.count;
     let source_name = gs.origin.source_name.clone();
@@ -117,17 +122,26 @@ fn Console(mut state: Signal<Option<GameState>>, tuning: Signal<Tuning>) -> Elem
         div { class: "readout", "REACTOR CORE" }
         div { class: "charge", "{charge:.0} / {capacity:.0}" }
         div { class: "status status-{status}", "{status}" }
-        div { class: "res", "Scrap: {scrap:.0}   \u{00b7}   Crew: {crew}" }
+        if salvage_unlocked {
+            div { class: "res",
+                "Scrap: {scrap:.0}"
+                if crew_arrived { "   ·   Crew: {crew}" }
+            }
+        }
 
         if is_cold {
             button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
         } else {
-            button { class: "act", onclick: move |_| act(Action::Salvage), "Salvage" }
-            button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
-            button {
-                class: "act",
-                onclick: move |_| act(Action::ActivateCrewSource),
-                "Activate {source_name}"
+            if salvage_unlocked {
+                button { class: "act", onclick: move |_| act(Action::Salvage), "Salvage" }
+                button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
+            }
+            if source_available && !source_active {
+                button {
+                    class: "act",
+                    onclick: move |_| act(Action::ActivateCrewSource),
+                    "Activate {source_name}"
+                }
             }
         }
         button {
