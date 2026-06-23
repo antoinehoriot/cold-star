@@ -5,6 +5,7 @@ use gloo_storage::{LocalStorage, Storage};
 use sim::Tuning;
 use sim::job::{Job, JobRegistry};
 use sim::module::{Module, ModuleRegistry};
+use sim::research::{Tech, TechRegistry};
 use sim::save;
 use sim::state::{GameState, World};
 use sim::time::ticks_for_elapsed;
@@ -16,7 +17,12 @@ const OFFLINE_CAP: u64 = 8 * 60 * 60;
 
 /// Choose the starting state: shared link > local save (+catch-up) > none.
 /// `None` means there is no game yet — the UI shows origin select.
-pub fn load_initial(tuning: &Tuning, jobs: &[Job], modules: &[Module]) -> Option<GameState> {
+pub fn load_initial(
+    tuning: &Tuning,
+    jobs: &[Job],
+    modules: &[Module],
+    techs: &[Tech],
+) -> Option<GameState> {
     if let Some(payload) = link_payload() {
         match save::decode(&payload) {
             Ok(state) => {
@@ -37,10 +43,12 @@ pub fn load_initial(tuning: &Tuning, jobs: &[Job], modules: &[Module]) -> Option
                 let n = ticks_for_elapsed(js_sys::Date::now() - saved_at, TICK_MS, OFFLINE_CAP);
                 let j = JobRegistry(jobs.to_vec());
                 let m = ModuleRegistry(modules.to_vec());
+                let tc = TechRegistry(techs.to_vec());
                 let world = World {
                     tuning,
                     jobs: &j,
                     modules: &m,
+                    techs: &tc,
                 };
                 state.advance(&world, n);
             }

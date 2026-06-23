@@ -4,6 +4,7 @@ use sim::flags::Flag;
 use sim::job::JobRegistry;
 use sim::module::ModuleRegistry;
 use sim::origin::OriginDef;
+use sim::research::{Tech, TechRegistry};
 use sim::resources::ResourceKind;
 use sim::state::{Action, GameState, World};
 
@@ -235,11 +236,13 @@ pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
     let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
     let modules = use_signal(|| content::load_modules().map(|r| r.0).unwrap_or_default());
+    let techs = use_signal(|| content::load_techs().map(|r| r.0).unwrap_or_default());
     let origins = use_signal(|| content::load_origins().unwrap_or_default());
-    let state =
-        use_signal(|| crate::persist::load_initial(&tuning.read(), &jobs.read(), &modules.read()));
+    let state = use_signal(|| {
+        crate::persist::load_initial(&tuning.read(), &jobs.read(), &modules.read(), &techs.read())
+    });
 
-    crate::tick::use_tick_driver(state, tuning, jobs, modules, 1000.0, 8 * 60 * 60);
+    crate::tick::use_tick_driver(state, tuning, jobs, modules, techs, 1000.0, 8 * 60 * 60);
 
     let has_game = state.read().is_some();
 
@@ -248,9 +251,9 @@ pub fn App() -> Element {
         main { class: "console",
             h1 { class: "title", "COLD STAR" }
             if has_game {
-                Console { state, tuning, jobs, modules }
+                Console { state, tuning, jobs, modules, techs }
             } else {
-                OriginSelect { state, tuning, jobs, modules, origins }
+                OriginSelect { state, tuning, jobs, modules, techs, origins }
             }
         }
     }
@@ -262,6 +265,7 @@ fn OriginSelect(
     tuning: Signal<Tuning>,
     jobs: Signal<Vec<sim::job::Job>>,
     modules: Signal<Vec<sim::module::Module>>,
+    techs: Signal<Vec<Tech>>,
     origins: Signal<Vec<OriginDef>>,
 ) -> Element {
     rsx! {
@@ -274,7 +278,8 @@ fn OriginSelect(
                         let t = tuning.read().clone();
                         let j = JobRegistry(jobs.read().clone());
                         let m = ModuleRegistry(modules.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m };
+                        let tc = TechRegistry(techs.read().clone());
+                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                         let seed = crate::persist::seed_from_clock();
                         let gs = GameState::new_with_origin(&o, &world, seed);
                         state.set(Some(gs));
@@ -293,6 +298,7 @@ fn Console(
     tuning: Signal<Tuning>,
     jobs: Signal<Vec<sim::job::Job>>,
     modules: Signal<Vec<sim::module::Module>>,
+    techs: Signal<Vec<Tech>>,
 ) -> Element {
     let snapshot = state.read();
     let Some(gs) = snapshot.as_ref() else {
@@ -397,7 +403,8 @@ fn Console(
             .enumerate()
             .map(|(i, c)| {
                 let name = match c {
-                    sim::priority::Consumer::LifeSupport => "Life Support".to_string(),
+                    sim::priority::Consumer::Atmosphere => "Atmosphere".to_string(),
+                    sim::priority::Consumer::Thermal => "Thermal".to_string(),
                     sim::priority::Consumer::Job(id) => jobs
                         .read()
                         .iter()
@@ -415,10 +422,12 @@ fn Console(
         let t = tuning.read().clone();
         let j = JobRegistry(jobs.read().clone());
         let m = ModuleRegistry(modules.read().clone());
+        let tc = TechRegistry(techs.read().clone());
         let world = World {
             tuning: &t,
             jobs: &j,
             modules: &m,
+            techs: &tc,
         };
         if let Some(gs) = state.write().as_mut() {
             let _ = gs.apply(&world, action);
@@ -497,7 +506,8 @@ fn Console(
                                 let t = tuning.read().clone();
                                 let j = JobRegistry(jobs.read().clone());
                                 let m = ModuleRegistry(modules.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m };
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                                 if let Some(gs) = state.write().as_mut() {
                                     let _ = gs.apply(&world, Action::AssignCrew { job, delta });
                                 }
@@ -511,7 +521,8 @@ fn Console(
                                 let t = tuning.read().clone();
                                 let j = JobRegistry(jobs.read().clone());
                                 let m = ModuleRegistry(modules.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m };
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                                 if let Some(gs) = state.write().as_mut() {
                                     let _ = gs.apply(&world, Action::Build(id));
                                 }
@@ -525,7 +536,8 @@ fn Console(
                                 let t = tuning.read().clone();
                                 let j = JobRegistry(jobs.read().clone());
                                 let m = ModuleRegistry(modules.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m };
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                                 if let Some(gs) = state.write().as_mut() {
                                     let _ = gs.apply(&world, Action::SetPriority { consumer, up });
                                 }

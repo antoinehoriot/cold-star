@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use sim::Tuning;
 use sim::job::{Job, JobRegistry};
 use sim::module::{Module, ModuleRegistry};
+use sim::research::{Tech, TechRegistry};
 use sim::state::{GameState, World};
 use sim::time::ticks_for_elapsed;
 
@@ -14,6 +15,7 @@ pub fn use_tick_driver(
     tuning: Signal<Tuning>,
     jobs: Signal<Vec<Job>>,
     modules: Signal<Vec<Module>>,
+    techs: Signal<Vec<Tech>>,
     tick_ms: f64,
     offline_cap: u64,
 ) {
@@ -28,10 +30,12 @@ pub fn use_tick_driver(
                     let t = tuning.read().clone();
                     let j = JobRegistry(jobs.read().clone());
                     let m = ModuleRegistry(modules.read().clone());
+                    let tc = TechRegistry(techs.read().clone());
                     let world = World {
                         tuning: &t,
                         jobs: &j,
                         modules: &m,
+                        techs: &tc,
                     };
                     if let Some(gs) = state.write().as_mut() {
                         gs.advance(&world, n);
