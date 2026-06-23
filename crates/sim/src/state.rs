@@ -7,9 +7,12 @@ use crate::codex::{Codex, Discovery, DiscoveryId, NoteId};
 use crate::config::Tuning;
 use crate::crew::Crew;
 use crate::economy::run_economy;
+use crate::expedition::Activity;
 use crate::expedition::Expedition;
 use crate::flags::Flag;
-use crate::galaxy::{Galaxy, GalaxyState, HOME, reveal_from};
+use crate::galaxy::{
+    Galaxy, GalaxyState, HOME, distance, jump_cost, materialize_sites, reveal_from,
+};
 use crate::job::{JobId, JobRegistry};
 use crate::log::Log;
 use crate::module::{ModuleId, ModuleRegistry};
@@ -50,6 +53,7 @@ pub enum Action {
     SetPriority { consumer: Consumer, up: bool },
     StartResearch(TechId),
     UpgradeDrive,
+    Jump(crate::galaxy::SystemId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,6 +337,9 @@ impl GameState {
                 }
             }
 
+            // --- expedition activity (jump/scan/resolve/scavenge timers) ---
+            self.tick_expedition(world);
+
             // --- atmosphere failure: survival clock -> crew loss ---
             let atmosphere_failing = self.has_module(ModuleId::Atmosphere)
                 && self.crew.total > 0
@@ -582,6 +589,90 @@ impl GameState {
                     tuning.log_capacity,
                 );
                 Ok(())
+            }
+            Action::Jump(target) => {
+                if self.expedition.activity.is_some() {
+                    return Err(Rejected("the ship is already busy"));
+                }
+                if target == self.expedition.location {
+                    return Err(Rejected("already there"));
+                }
+                if !self.galaxy_state.revealed.contains(&target.0) {
+                    return Err(Rejected("that system is not on the map"));
+                }
+                let galaxy = self.galaxy(world);
+                let (Some(here), Some(dest)) =
+                    (galaxy.get(self.expedition.location), galaxy.get(target))
+                else {
+                    return Err(Rejected("unknown system"));
+                };
+                let dist = distance(here, dest);
+                if dist > self.ship.drive_range {
+                    return Err(Rejected("beyond drive range"));
+                }
+                let cost = jump_cost(dist, tuning);
+                if !self.resources.try_spend(ResourceKind::Fuel, cost) {
+                    return Err(Rejected("not enough fuel to jump"));
+                }
+                let ticks =
+                    tuning.transit_ticks_base + (dist * tuning.transit_ticks_factor).round() as u32;
+                self.expedition.activity = Some(Activity::Transit { to: target, ticks });
+                Ok(())
+            }
+        }
+    }
+
+    /// Advance the single expedition activity by one tick; apply its effect on
+    /// completion (mutate-on-completion). Deterministic: one decrement per tick.
+    fn tick_expedition(&mut self, world: &World) {
+        let tuning = world.tuning;
+        let remaining = match &mut self.expedition.activity {
+            None => return,
+            Some(Activity::Transit { ticks, .. })
+            | Some(Activity::Scan { ticks, .. })
+            | Some(Activity::ResolveSite { ticks, .. })
+            | Some(Activity::Scavenge { ticks }) => {
+                if *ticks > 0 {
+                    *ticks -= 1;
+                }
+                *ticks
+            }
+        };
+        if remaining > 0 {
+            return;
+        }
+        let finished = self.expedition.activity.take().expect("activity present");
+        match finished {
+            Activity::Transit { to, .. } => {
+                self.expedition.location = to;
+                let galaxy = self.galaxy(world);
+                reveal_from(
+                    &galaxy,
+                    to,
+                    tuning.galaxy_reveal_radius,
+                    &mut self.galaxy_state.revealed,
+                );
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    self.galaxy_state.sites.entry(to.0)
+                    && let Some(sys) = galaxy.get(to)
+                {
+                    e.insert(materialize_sites(
+                        self.world_seed,
+                        to.0,
+                        sys.star_type,
+                        tuning,
+                    ));
+                }
+                self.log.push(
+                    self.tick,
+                    "The drive cuts out. A new star fills the port.",
+                    tuning.log_capacity,
+                );
+            }
+            // Scan / ResolveSite / Scavenge arms added in later tasks.
+            other => {
+                // Re-store unhandled activity kinds until their task lands.
+                self.expedition.activity = Some(other);
             }
         }
     }
@@ -880,6 +971,59 @@ mod tests {
 
     fn sim_home() -> crate::galaxy::SystemId {
         crate::galaxy::HOME
+    }
+
+    /// Find a revealed, reachable, non-home system for a given seed (drive range
+    /// is generous vs reveal radius in defaults, so a revealed neighbor is reachable).
+    fn a_reachable_target(s: &GameState, w: &World) -> crate::galaxy::SystemId {
+        let g = s.galaxy(w);
+        let here = g.get(s.expedition.location).unwrap();
+        s.galaxy_state
+            .revealed
+            .iter()
+            .map(|&id| crate::galaxy::SystemId(id))
+            .filter(|&id| id != s.expedition.location)
+            .find(|&id| crate::galaxy::distance(here, g.get(id).unwrap()) <= s.ship.drive_range)
+            .expect("a reachable revealed neighbor exists for this seed")
+    }
+
+    #[test]
+    fn jump_costs_fuel_transits_then_arrives() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 4);
+        s.resources.add(ResourceKind::Fuel, 100.0);
+        let target = a_reachable_target(&s, &w);
+        let g = s.galaxy(&w);
+        let dist =
+            crate::galaxy::distance(g.get(crate::galaxy::HOME).unwrap(), g.get(target).unwrap());
+        let cost = crate::galaxy::jump_cost(dist, &t);
+        let fuel_before = s.resources.amount(ResourceKind::Fuel);
+        s.apply(&w, Action::Jump(target)).unwrap();
+        // Fuel deducted immediately; still at home, now in transit.
+        assert!((fuel_before - s.resources.amount(ResourceKind::Fuel) - cost).abs() < 1e-9);
+        assert_eq!(s.expedition.location, crate::galaxy::HOME);
+        assert!(s.away());
+        let ticks = t.transit_ticks_base + (dist * t.transit_ticks_factor).round() as u32;
+        s.advance(&w, (ticks - 1) as u64);
+        assert_ne!(s.expedition.location, target); // not yet
+        s.advance(&w, 1);
+        assert_eq!(s.expedition.location, target); // arrived
+        assert!(s.expedition.activity.is_none());
+        assert!(s.galaxy_state.sites.contains_key(&target.0)); // materialized on arrival
+    }
+
+    #[test]
+    fn jump_rejected_when_unreachable_or_unaffordable() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 4);
+        let target = a_reachable_target(&s, &w);
+        // No fuel.
+        assert_eq!(
+            s.apply(&w, Action::Jump(target)),
+            Err(Rejected("not enough fuel to jump"))
+        );
     }
 
     #[test]
