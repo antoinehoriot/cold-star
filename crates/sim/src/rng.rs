@@ -31,6 +31,17 @@ impl Rng {
     }
 }
 
+/// Mix a `u64` seed with a `u32` id into a fresh sub-seed (splitmix64 finalizer).
+/// Pure: used to derive independent generation streams per system/site.
+pub fn hash(seed: u64, id: u32) -> u64 {
+    let mut z = seed
+        .wrapping_add((id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +85,23 @@ mod tests {
         // an accidental constant/shift typo that the relative tests wouldn't catch.
         let mut r = Rng::new(0);
         assert_eq!(r.next_u64(), 0xe220a8397b1dcdaf);
+    }
+
+    #[test]
+    fn hash_is_deterministic_and_disperses() {
+        assert_eq!(hash(123, 7), hash(123, 7)); // stable
+        assert_ne!(hash(123, 7), hash(123, 8)); // id matters
+        assert_ne!(hash(123, 7), hash(124, 7)); // seed matters
+        // Distinct sub-seeds across a small id range (no collisions in 0..32).
+        let mut seen = std::collections::BTreeSet::new();
+        for id in 0..32u32 {
+            assert!(seen.insert(hash(0xDEADBEEF, id)), "collision at {id}");
+        }
+    }
+
+    #[test]
+    fn hash_pins_a_known_value() {
+        // Guards against an accidental constant/shift change.
+        assert_eq!(hash(0, 0), 16294208416658607535u64);
     }
 }
