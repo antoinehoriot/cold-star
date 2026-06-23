@@ -69,6 +69,40 @@ pub struct Tuning {
     pub thermal_draw: f64,
     /// Extra reactor charge lost per tick while thermal is built but unpowered.
     pub thermal_failure_drain: f64,
+
+    // M4 — galaxy
+    pub galaxy_system_count: u32,
+    pub galaxy_radius: f64,
+    pub galaxy_reveal_radius: f64,
+    pub star_weight_dwarf: f64,
+    pub star_weight_mainseq: f64,
+    pub star_weight_neutron: f64,
+    pub star_weight_dead: f64,
+    // M4 — ship
+    pub ship_base_drive_range: f64,
+    pub ship_cargo: f64,
+    pub ship_base_hull: f64,
+    // M4 — jump / transit
+    pub jump_base_cost: f64,
+    pub jump_drive_factor: f64,
+    pub transit_ticks_base: u32,
+    pub transit_ticks_factor: f64,
+    // M4 — scan
+    pub scan_data_cost: f64,
+    pub scan_ticks: u32,
+    // M4 — sites
+    pub site_resolve_ticks: u32,
+    pub site_asteroid_isotopes: f64,
+    pub site_asteroid_fuel: f64,
+    pub site_derelict_components: f64,
+    pub site_derelict_data: f64,
+    pub reward_gradient: f64,
+    // M4 — drive upgrade
+    pub drive_upgrade_isotopes: f64,
+    pub drive_upgrade_step: f64,
+    // M4 — scavenge (soft stranded recovery)
+    pub scavenge_ticks: u32,
+    pub scavenge_fuel: f64,
 }
 
 impl Default for Tuning {
@@ -100,6 +134,32 @@ impl Default for Tuning {
             crew_loss_interval: 10,
             thermal_draw: 1.0,
             thermal_failure_drain: 2.0,
+            galaxy_system_count: 10,
+            galaxy_radius: 100.0,
+            galaxy_reveal_radius: 45.0,
+            star_weight_dwarf: 4.0,
+            star_weight_mainseq: 3.0,
+            star_weight_neutron: 2.0,
+            star_weight_dead: 2.0,
+            ship_base_drive_range: 40.0,
+            ship_cargo: 60.0,
+            ship_base_hull: 10.0,
+            jump_base_cost: 5.0,
+            jump_drive_factor: 0.2,
+            transit_ticks_base: 8,
+            transit_ticks_factor: 0.1,
+            scan_data_cost: 4.0,
+            scan_ticks: 10,
+            site_resolve_ticks: 12,
+            site_asteroid_isotopes: 8.0,
+            site_asteroid_fuel: 4.0,
+            site_derelict_components: 6.0,
+            site_derelict_data: 5.0,
+            reward_gradient: 0.01,
+            drive_upgrade_isotopes: 10.0,
+            drive_upgrade_step: 15.0,
+            scavenge_ticks: 20,
+            scavenge_fuel: 6.0,
         }
     }
 }

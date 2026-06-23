@@ -126,6 +126,58 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "crew_loss_interval must be >= 1".into(),
         ));
     }
+    for (name, v) in [
+        ("galaxy_radius", t.galaxy_radius),
+        ("galaxy_reveal_radius", t.galaxy_reveal_radius),
+        ("star_weight_dwarf", t.star_weight_dwarf),
+        ("star_weight_mainseq", t.star_weight_mainseq),
+        ("star_weight_neutron", t.star_weight_neutron),
+        ("star_weight_dead", t.star_weight_dead),
+        ("ship_base_drive_range", t.ship_base_drive_range),
+        ("ship_cargo", t.ship_cargo),
+        ("ship_base_hull", t.ship_base_hull),
+        ("jump_base_cost", t.jump_base_cost),
+        ("jump_drive_factor", t.jump_drive_factor),
+        ("transit_ticks_factor", t.transit_ticks_factor),
+        ("scan_data_cost", t.scan_data_cost),
+        ("site_asteroid_isotopes", t.site_asteroid_isotopes),
+        ("site_asteroid_fuel", t.site_asteroid_fuel),
+        ("site_derelict_components", t.site_derelict_components),
+        ("site_derelict_data", t.site_derelict_data),
+        ("reward_gradient", t.reward_gradient),
+        ("drive_upgrade_isotopes", t.drive_upgrade_isotopes),
+        ("drive_upgrade_step", t.drive_upgrade_step),
+        ("scavenge_fuel", t.scavenge_fuel),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
+    if t.galaxy_system_count < 2 {
+        return Err(ContentError::Invalid(
+            "galaxy_system_count must be >= 2".into(),
+        ));
+    }
+    if t.ship_base_drive_range <= 0.0 || t.ship_cargo <= 0.0 {
+        return Err(ContentError::Invalid(
+            "ship_base_drive_range and ship_cargo must be > 0".into(),
+        ));
+    }
+    for (name, v) in [
+        ("transit_ticks_base", t.transit_ticks_base),
+        ("scan_ticks", t.scan_ticks),
+        ("site_resolve_ticks", t.site_resolve_ticks),
+        ("scavenge_ticks", t.scavenge_ticks),
+    ] {
+        if v < 1 {
+            return Err(ContentError::Invalid(format!("{name} must be >= 1")));
+        }
+    }
+    if t.star_weight_dwarf + t.star_weight_mainseq + t.star_weight_neutron + t.star_weight_dead
+        <= 0.0
+    {
+        return Err(ContentError::Invalid("star weights must sum to > 0".into()));
+    }
     Ok(())
 }
 
@@ -507,5 +559,25 @@ mod tests {
         assert_eq!(t.crew_loss_interval, 10);
         assert_eq!(t.thermal_draw, 1.0);
         assert_eq!(t.thermal_failure_drain, 2.0);
+    }
+
+    #[test]
+    fn loads_m4_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.galaxy_system_count, 10);
+        assert_eq!(t.galaxy_radius, 100.0);
+        assert_eq!(t.galaxy_reveal_radius, 45.0);
+        assert_eq!(t.ship_base_drive_range, 40.0);
+        assert_eq!(t.ship_cargo, 60.0);
+        assert_eq!(t.jump_base_cost, 5.0);
+        assert_eq!(t.jump_drive_factor, 0.2);
+        assert_eq!(t.transit_ticks_base, 8);
+        assert_eq!(t.scan_data_cost, 4.0);
+        assert_eq!(t.scan_ticks, 10);
+        assert_eq!(t.site_resolve_ticks, 12);
+        assert_eq!(t.site_asteroid_isotopes, 8.0);
+        assert_eq!(t.drive_upgrade_isotopes, 10.0);
+        assert_eq!(t.drive_upgrade_step, 15.0);
+        assert_eq!(t.scavenge_fuel, 6.0);
     }
 }
