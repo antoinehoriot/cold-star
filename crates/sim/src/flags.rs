@@ -15,6 +15,7 @@ pub enum Flag {
     BuildMenuUnlocked,
     PowerBudgetVisible,
     Tier2Unlocked,
+    JumpTheoryKnown,
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ const TUNING_RON: &str = include_str!("../data/tuning.ron");
 const ORIGINS_RON: &str = include_str!("../data/origins.ron");
 const JOBS_RON: &str = include_str!("../data/jobs.ron");
 const MODULES_RON: &str = include_str!("../data/modules.ron");
+const TECHS_RON: &str = include_str!("../data/techs.ron");
 
 #[derive(Debug)]
 pub enum ContentError {
@@ -130,6 +131,7 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
 
 use sim::job::{JobId, JobRegistry};
 use sim::module::{ModuleId, ModuleRegistry};
+use sim::research::{TechId, TechRegistry};
 
 pub fn load_jobs() -> Result<JobRegistry, ContentError> {
     let jobs: Vec<sim::job::Job> =
@@ -213,6 +215,60 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
     Ok(reg)
 }
 
+pub fn load_techs() -> Result<TechRegistry, ContentError> {
+    let techs: Vec<sim::research::Tech> =
+        ron::from_str(TECHS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    let reg = TechRegistry(techs);
+    for want in [
+        TechId::CoreTuning,
+        TechId::ContainmentFields,
+        TechId::ResonantCore,
+        TechId::RefinedProcesses,
+        TechId::ColdLogistics,
+        TechId::DeepScan,
+        TechId::JumpTheory,
+    ] {
+        if reg.get(want).is_none() {
+            return Err(ContentError::Invalid(format!("techs.ron missing {want:?}")));
+        }
+    }
+    for t in reg.iter() {
+        if !t.data_cost.is_finite() || t.data_cost < 0.0 {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: data_cost must be finite >= 0",
+                t.id
+            )));
+        }
+        if t.research_ticks < 1 {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: research_ticks must be >= 1",
+                t.id
+            )));
+        }
+        for r in &t.requires {
+            if reg.get(*r).is_none() {
+                return Err(ContentError::Invalid(format!(
+                    "{:?}: requires missing {r:?}",
+                    t.id
+                )));
+            }
+            if *r == t.id {
+                return Err(ContentError::Invalid(format!(
+                    "{:?}: requires itself",
+                    t.id
+                )));
+            }
+        }
+        if t.lore.trim().is_empty() {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: lore must not be empty",
+                t.id
+            )));
+        }
+    }
+    Ok(reg)
+}
+
 pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
     let origins: Vec<OriginDef> =
         ron::from_str(ORIGINS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
@@ -248,6 +304,29 @@ pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loads_seven_techs() {
+        let techs = load_techs().unwrap();
+        assert_eq!(techs.0.len(), 7);
+        // Jump Theory requires Deep Scan and sets a flag.
+        let jt = techs.get(sim::research::TechId::JumpTheory).unwrap();
+        assert!(jt.requires.contains(&sim::research::TechId::DeepScan));
+        assert!(matches!(jt.grant, sim::research::Grant::SetFlag(_)));
+        // Every requires-id resolves and no tech requires itself.
+        for t in techs.iter() {
+            for r in &t.requires {
+                assert!(
+                    techs.get(*r).is_some(),
+                    "{:?} requires missing {:?}",
+                    t.id,
+                    r
+                );
+                assert_ne!(*r, t.id);
+            }
+            assert!(!t.lore.trim().is_empty(), "{:?} missing lore", t.id);
+        }
+    }
 
     #[test]
     fn loads_jobs_and_modules() {
