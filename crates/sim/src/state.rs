@@ -722,6 +722,17 @@ mod tests {
                     ..Default::default()
                 },
             },
+            Module {
+                id: ModuleId::Atmosphere,
+                name: "Atmosphere".into(),
+                description: "test".into(),
+                tier: 1,
+                cost: vec![(ResourceKind::Scrap, 10.0)],
+                cost_scaling: 1.0,
+                repeatable: false,
+                requires_modules: vec![],
+                unlocks: ModuleUnlocks::default(),
+            },
         ])
     }
     fn techs() -> crate::research::TechRegistry {
@@ -1207,5 +1218,84 @@ mod tests {
         s.advance(&w, 1);
         // 1 salvager x1 base x mult 2.0 = +2 scrap this tick.
         assert!((s.resources.amount(ResourceKind::Scrap) - before - 2.0).abs() < 1e-9);
+    }
+
+    /// Regression guard: first crew loss lands exactly `crew_loss_interval` ticks
+    /// after the atmosphere grace clock hits 0 — not interval+1.
+    ///
+    /// Timing walkthrough (grace_max=G, interval=I):
+    ///   Ticks 1..G   : grace counts down from G to 1.
+    ///   Tick  G      : grace hits 0 → crew_loss_timer = I, warning log fires.
+    ///   Ticks G+1..  : else branch; each tick decrements timer.
+    ///   Tick  G+I    : timer decrements to 0 → lose_one() fires. ✓ exactly I ticks after G.
+    #[test]
+    fn atmosphere_crew_loss_first_fires_at_exactly_interval_ticks_after_grace_expires() {
+        use crate::module::{Module, ModuleUnlocks};
+
+        let mut t = Tuning::default();
+        // Use small values so the test runs in few ticks.
+        t.atmosphere_grace_max = 3;
+        t.crew_loss_interval = 5;
+        // Ensure no fuel / charge so the reactor stays Cold immediately.
+        t.reactor_capacity = 100.0;
+        t.reactor_baseline_draw = 0.0; // prevent incidental drain
+        t.reactor_drain_per_tick = 0.0;
+
+        let j = jobs();
+        // Build a module registry that includes Atmosphere (zero cost for direct injection).
+        let m = ModuleRegistry(vec![Module {
+            id: ModuleId::Atmosphere,
+            name: "Atmosphere".into(),
+            description: "test".into(),
+            tier: 1,
+            cost: vec![],
+            cost_scaling: 1.0,
+            repeatable: false,
+            requires_modules: vec![],
+            unlocks: ModuleUnlocks::default(),
+        }]);
+        let tc = techs();
+        let w = world(&t, &j, &m, &tc);
+
+        // Start with a Cold reactor (zero charge).
+        let origin = OriginDef {
+            start: crate::origin::OriginStart {
+                scrap: 0.0,
+                reactor_capacity: 100.0,
+                reactor_charge: 0.0,
+            },
+            ..default_origin_def(&t)
+        };
+        let mut s = GameState::new_with_origin(&origin, &w, 1);
+        assert_eq!(s.reactor.status, ReactorStatus::Cold);
+
+        // Inject crew and Atmosphere module directly (no scrap cost needed).
+        s.crew.total = 3;
+        *s.built.entry(ModuleId::Atmosphere).or_insert(0) += 1;
+        // Grace starts at atmosphere_grace_max.
+        assert_eq!(s.atmosphere_grace, t.atmosphere_grace_max);
+
+        let crew_before = s.crew.total;
+
+        // Advance through the grace period. At tick grace_max, grace hits 0 and
+        // crew_loss_timer is set to crew_loss_interval; no loss yet.
+        s.advance(&w, t.atmosphere_grace_max as u64);
+        assert_eq!(s.atmosphere_grace, 0, "grace should be exhausted");
+        assert_eq!(s.crew.total, crew_before, "no crew lost during grace");
+
+        // Advance (interval - 1) more ticks: timer counting down, no loss yet.
+        s.advance(&w, (t.crew_loss_interval - 1) as u64);
+        assert_eq!(
+            s.crew.total, crew_before,
+            "no crew lost before the interval is fully elapsed"
+        );
+
+        // One more tick: timer hits 0, first crew lost.
+        s.advance(&w, 1);
+        assert_eq!(
+            s.crew.total,
+            crew_before - 1,
+            "exactly one crew lost at crew_loss_interval ticks after grace expired"
+        );
     }
 }
