@@ -266,6 +266,40 @@ pub fn load_techs() -> Result<TechRegistry, ContentError> {
             )));
         }
     }
+    // Detect multi-hop requires cycles (A -> B -> A). DFS with a path stack.
+    fn has_cycle(
+        reg: &TechRegistry,
+        id: TechId,
+        visiting: &mut std::collections::BTreeSet<TechId>,
+        done: &mut std::collections::BTreeSet<TechId>,
+    ) -> bool {
+        if done.contains(&id) {
+            return false;
+        }
+        if !visiting.insert(id) {
+            return true; // id is already on the current path -> cycle
+        }
+        if let Some(t) = reg.get(id) {
+            for &r in &t.requires {
+                if has_cycle(reg, r, visiting, done) {
+                    return true;
+                }
+            }
+        }
+        visiting.remove(&id);
+        done.insert(id);
+        false
+    }
+    let mut visiting = std::collections::BTreeSet::new();
+    let mut done = std::collections::BTreeSet::new();
+    for t in reg.iter() {
+        if has_cycle(&reg, t.id, &mut visiting, &mut done) {
+            return Err(ContentError::Invalid(format!(
+                "tech requires graph has a cycle at {:?}",
+                t.id
+            )));
+        }
+    }
     Ok(reg)
 }
 
@@ -304,6 +338,12 @@ pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tech_graph_has_no_cycle() {
+        // load_techs runs the DFS cycle check; the real techs.ron must pass it.
+        assert!(load_techs().is_ok());
+    }
 
     #[test]
     fn loads_seven_techs() {
