@@ -49,6 +49,7 @@ pub enum Action {
     AssignCrew { job: JobId, delta: i32 },
     SetPriority { consumer: Consumer, up: bool },
     StartResearch(TechId),
+    UpgradeDrive,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -560,6 +561,24 @@ impl GameState {
                 self.log.push(
                     self.tick,
                     format!("Research begun: {}", tech.name),
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::UpgradeDrive => {
+                if !self.flags.contains(&Flag::NavigationKnown) {
+                    return Err(Rejected("navigation is not yet understood"));
+                }
+                if !self
+                    .resources
+                    .try_spend(ResourceKind::Isotopes, tuning.drive_upgrade_isotopes)
+                {
+                    return Err(Rejected("not enough isotopes to recalibrate the drive"));
+                }
+                self.ship.drive_range += tuning.drive_upgrade_step;
+                self.log.push(
+                    self.tick,
+                    "The drive reaches a little further into the dark.",
                     tuning.log_capacity,
                 );
                 Ok(())
@@ -1453,6 +1472,27 @@ mod tests {
         assert!(
             with.reactor.charge < without.reactor.charge,
             "thermal failure should drain charge faster"
+        );
+    }
+
+    #[test]
+    fn upgrade_drive_needs_navigation_and_isotopes() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.resources.add(ResourceKind::Isotopes, 100.0);
+        // Navigation not researched yet.
+        assert_eq!(
+            s.apply(&w, Action::UpgradeDrive),
+            Err(Rejected("navigation is not yet understood"))
+        );
+        s.flags.insert(Flag::NavigationKnown);
+        let before = s.ship.drive_range;
+        assert!(s.apply(&w, Action::UpgradeDrive).is_ok());
+        assert_eq!(s.ship.drive_range, before + t.drive_upgrade_step);
+        assert_eq!(
+            s.resources.amount(ResourceKind::Isotopes),
+            100.0 - t.drive_upgrade_isotopes
         );
     }
 

@@ -281,6 +281,7 @@ pub fn load_techs() -> Result<TechRegistry, ContentError> {
         TechId::ColdLogistics,
         TechId::DeepScan,
         TechId::JumpTheory,
+        TechId::Navigation,
     ] {
         if reg.get(want).is_none() {
             return Err(ContentError::Invalid(format!("techs.ron missing {want:?}")));
@@ -400,9 +401,9 @@ mod tests {
     }
 
     #[test]
-    fn loads_seven_techs() {
+    fn loads_eight_techs() {
         let techs = load_techs().unwrap();
-        assert_eq!(techs.0.len(), 7);
+        assert_eq!(techs.0.len(), 8);
         // Jump Theory requires Deep Scan and sets a flag.
         let jt = techs.get(sim::research::TechId::JumpTheory).unwrap();
         assert!(jt.requires.contains(&sim::research::TechId::DeepScan));

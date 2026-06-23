@@ -27,4 +27,8 @@
       data_cost: 25.0, research_ticks: 80, requires: [DeepScan],
       grant: SetFlag(JumpTheoryKnown),
       lore: "The math closes. There is a way out, and a part of you already wants it - the way the others must have wanted it, before you." ),
+    ( id: Navigation, name: "Navigation", blurb: "Recalibrate the drive for deeper jumps.",
+      data_cost: 15.0, research_ticks: 50, requires: [JumpTheory],
+      grant: SetFlag(NavigationKnown),
+      lore: "You map the currents between stars. Distance stops being a wall and becomes a question of will." ),
 ]

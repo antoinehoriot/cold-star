@@ -17,6 +17,7 @@ pub enum TechId {
     ColdLogistics,
     DeepScan,
     JumpTheory,
+    Navigation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

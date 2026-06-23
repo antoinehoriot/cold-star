@@ -19,6 +19,7 @@ pub enum Flag {
     ResearchUnlocked,
     CodexUnlocked,
     ShipyardComplete,
+    NavigationKnown,
 }
 
 #[cfg(test)]
