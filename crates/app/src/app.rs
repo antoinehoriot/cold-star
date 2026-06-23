@@ -78,6 +78,12 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .research-active { border-left: 2px solid #2f6a80; padding-left: .6rem; margin: .3rem 0; }
 .rbar { height: 6px; background: #0c1822; border-radius: 3px; overflow: hidden; margin: .3rem 0; }
 .rbar > span { display: block; height: 100%; background: #6fb7d6; }
+.codex-row { font-size: .84rem; padding: .2rem 0; color: #8aa0b0; cursor: pointer; }
+.codex-row:hover { color: #c7d3dd; }
+.codex-text { font-size: .8rem; color: #9fb3c2; line-height: 1.5; border-left: 2px solid #1d4456; padding: .2rem 0 .4rem .6rem; margin: 0 0 .4rem; }
+.ls-warn { margin: .8rem 0; padding: .5rem .8rem; border: 1px solid #5a2626; border-radius: 4px;
+  color: #e0a24a; font-size: .82rem; letter-spacing: .1em; }
+.ls-warn.crit { color: #d66f6f; border-color: #7a2a2a; }
 ";
 
 #[component]
@@ -305,6 +311,30 @@ fn ResearchPanel(
 }
 
 #[component]
+fn CodexPanel(entries: Vec<(String, String)>) -> Element {
+    // entries: (title, text). Click a title to expand its text inline.
+    let mut open = use_signal(|| None::<usize>);
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "CODEX" }
+            for (i, (title, text)) in entries.into_iter().enumerate() {
+                div {
+                    class: "codex-row",
+                    onclick: move |_| {
+                        let next = if open() == Some(i) { None } else { Some(i) };
+                        open.set(next);
+                    },
+                    "{title}"
+                }
+                if open() == Some(i) {
+                    div { class: "codex-text", "{text}" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
     let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
@@ -506,6 +536,30 @@ fn Console(
             .unwrap_or_else(|| format!("{:?}", a.tech));
         (name, a.ticks_remaining, total)
     });
+    let codex_unlocked = gs.flags.contains(&Flag::CodexUnlocked);
+    let codex_rows: Vec<(String, String)> = gs
+        .codex
+        .entries
+        .iter()
+        .rev()
+        .map(|d| (d.title.clone(), d.text.clone()))
+        .collect();
+    // Atmosphere warning: the survival clock is running (grace below max) while the
+    // Atmosphere module is built and crew exist. Crit when grace is nearly gone.
+    let atmo_built = gs
+        .built
+        .get(&sim::module::ModuleId::Atmosphere)
+        .copied()
+        .unwrap_or(0)
+        > 0;
+    let grace = gs.atmosphere_grace;
+    let grace_max = tuning.read().atmosphere_grace_max;
+    let atmo_warning: Option<(u32, bool)> = if atmo_built && gs.crew.total > 0 && grace < grace_max
+    {
+        Some((grace, grace * 4 <= grace_max)) // crit in the last quarter of the clock
+    } else {
+        None
+    };
     let research_busy = gs.research.active.is_some();
     let research_rows: Vec<(
         sim::research::TechId,
@@ -565,6 +619,13 @@ fn Console(
         div { class: "charge", "{charge:.0} / {capacity:.0}" }
         div { class: "status status-{status}", "{status}" }
 
+        if let Some((secs, crit)) = atmo_warning {
+            div {
+                class: if crit { "ls-warn crit" } else { "ls-warn" },
+                if secs > 0 { "ATMOSPHERE FAILING \u{2014} {secs}s of air" } else { "ATMOSPHERE GONE \u{2014} losing crew" }
+            }
+        }
+
         // Core action buttons — always rendered regardless of economy state.
         if is_cold {
             button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
@@ -618,6 +679,9 @@ fn Console(
                                 div { class: "log-line", "[{tick}] {text}" }
                             }
                         }
+                    }
+                    if codex_unlocked {
+                        CodexPanel { entries: codex_rows.clone() }
                     }
                 }
                 div { class: "col",
