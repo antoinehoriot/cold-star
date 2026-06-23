@@ -7,7 +7,9 @@ use crate::codex::{Codex, Discovery, DiscoveryId, NoteId};
 use crate::config::Tuning;
 use crate::crew::Crew;
 use crate::economy::run_economy;
+use crate::expedition::Expedition;
 use crate::flags::Flag;
+use crate::galaxy::{Galaxy, GalaxyState, HOME, reveal_from};
 use crate::job::{JobId, JobRegistry};
 use crate::log::Log;
 use crate::module::{ModuleId, ModuleRegistry};
@@ -18,6 +20,7 @@ use crate::reactor::{Reactor, ReactorStatus};
 use crate::research::{ActiveResearch, Grant, Research, TechId};
 use crate::resources::{ResourceKind, Resources};
 use crate::rng::Rng;
+use crate::ship::Ship;
 use crate::telemetry::Telemetry;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -73,6 +76,10 @@ pub struct GameState {
     pub crew_loss_timer: u32,
     pub research_output_mult: BTreeMap<JobId, f64>,
     pub total_scrap_gained: f64,
+    pub world_seed: u64,
+    pub ship: Ship,
+    pub expedition: Expedition,
+    pub galaxy_state: GalaxyState,
 }
 
 impl GameState {
@@ -114,17 +121,42 @@ impl GameState {
             crew_loss_timer: 0,
             research_output_mult: BTreeMap::new(),
             total_scrap_gained: 0.0,
+            world_seed: seed,
+            ship: Ship::new(tuning),
+            expedition: Expedition::default(),
+            galaxy_state: GalaxyState::default(),
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
         }
         state.sync_priority(world);
         state.update_disclosure_flags(world);
+        let galaxy = Galaxy::generate(state.world_seed, world.tuning);
+        reveal_from(
+            &galaxy,
+            HOME,
+            world.tuning.galaxy_reveal_radius,
+            &mut state.galaxy_state.revealed,
+        );
         state
     }
 
     pub fn origin_id(&self) -> Origin {
         self.origin.id
+    }
+
+    /// Regenerate the (unsaved) galaxy from the world seed.
+    pub fn galaxy(&self, world: &World) -> Galaxy {
+        Galaxy::generate(self.world_seed, world.tuning)
+    }
+
+    /// Away = not docked at home, or mid-jump. Station management locks while away.
+    pub fn away(&self) -> bool {
+        self.expedition.location != HOME
+            || matches!(
+                self.expedition.activity,
+                Some(crate::expedition::Activity::Transit { .. })
+            )
     }
 
     pub fn built_count(&self, id: ModuleId) -> u32 {
@@ -786,6 +818,26 @@ mod tests {
             modules: m,
             techs: tc,
         }
+    }
+
+    fn sim_home() -> crate::galaxy::SystemId {
+        crate::galaxy::HOME
+    }
+
+    #[test]
+    fn new_game_initializes_m4_state() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let s = GameState::new(&w, 77);
+        assert_eq!(s.world_seed, 77);
+        assert!(!s.ship.built);
+        assert_eq!(s.ship.drive_range, t.ship_base_drive_range);
+        assert_eq!(s.expedition.location, sim_home());
+        assert!(s.expedition.activity.is_none());
+        assert!(!s.away());
+        // Home is revealed at the start; the galaxy is regenerable, not stored.
+        assert!(s.galaxy_state.revealed.contains(&0));
+        assert_eq!(s.galaxy(&w).systems.len(), t.galaxy_system_count as usize);
     }
 
     #[test]
