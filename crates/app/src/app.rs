@@ -401,6 +401,12 @@ fn Console(
     };
 
     rsx! {
+        // Reactor readout — the heartbeat. ALWAYS visible (charge + status),
+        // independent of disclosure, so the core gauge never disappears.
+        div { class: "readout", "REACTOR CORE" }
+        div { class: "charge", "{charge:.0} / {capacity:.0}" }
+        div { class: "status status-{status}", "{status}" }
+
         // Core action buttons — always rendered regardless of economy state.
         if is_cold {
             button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
@@ -504,10 +510,8 @@ fn Console(
                 }
             }
         } else {
-            // Pre-dashboard M1 readout — shown before any panel is unlocked.
-            div { class: "readout", "REACTOR CORE" }
-            div { class: "charge", "{charge:.0} / {capacity:.0}" }
-            div { class: "status status-{status}", "{status}" }
+            // Reactor readout + buttons are rendered above; this branch is the
+            // bare opening (nothing disclosed yet) and adds the intro log.
             if salvage_unlocked {
                 div { class: "res",
                     "Scrap: {scrap:.0}"
