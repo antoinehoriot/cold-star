@@ -421,7 +421,27 @@ impl GameState {
         }
     }
 
+    /// Actions that manage the home station — refused while the player is away.
+    /// Expedition actions (Jump/ScanSystem/ResolveSite/Scavenge) are always allowed.
+    fn is_station_management(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::Ignite
+                | Action::Salvage
+                | Action::FeedCore
+                | Action::ActivateCrewSource
+                | Action::Build(_)
+                | Action::AssignCrew { .. }
+                | Action::SetPriority { .. }
+                | Action::StartResearch(_)
+                | Action::UpgradeDrive
+        )
+    }
+
     pub fn apply(&mut self, world: &World, action: Action) -> Result<(), Rejected> {
+        if self.away() && Self::is_station_management(&action) {
+            return Err(Rejected("you are away from the station"));
+        }
         let tuning = world.tuning;
         match action {
             Action::Ignite => {
@@ -1914,5 +1934,29 @@ mod tests {
         assert!(s.apply(&w, Action::Build(ModuleId::Shipyard)).is_ok());
         assert!(s.ship.built);
         assert!(s.flags.contains(&Flag::ShipyardComplete));
+    }
+
+    #[test]
+    fn station_management_locks_while_away() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 4);
+        s.resources.add(ResourceKind::Fuel, 200.0);
+        let target = a_reachable_target(&s, &w);
+        s.apply(&w, Action::Jump(target)).unwrap();
+        s.advance(&w, 64); // arrive — now away from home
+        assert!(s.away());
+        // Station actions are refused while away.
+        s.resources.add(ResourceKind::Scrap, 100.0);
+        assert_eq!(
+            s.apply(&w, Action::Salvage),
+            Err(Rejected("you are away from the station"))
+        );
+        assert_eq!(
+            s.apply(&w, Action::Build(ModuleId::Refinery)),
+            Err(Rejected("you are away from the station"))
+        );
+        // Jumping home is allowed while away.
+        assert!(s.apply(&w, Action::Jump(crate::galaxy::HOME)).is_ok());
     }
 }
