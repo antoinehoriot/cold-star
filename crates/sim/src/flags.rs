@@ -18,6 +18,7 @@ pub enum Flag {
     JumpTheoryKnown,
     ResearchUnlocked,
     CodexUnlocked,
+    ShipyardComplete,
 }
 
 #[cfg(test)]

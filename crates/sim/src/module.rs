@@ -17,6 +17,8 @@ pub enum ModuleId {
     Thermal,
     ReactorUpgrade,
     Capacitor,
+    Shipyard,
+    SensorArray,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -41,6 +43,8 @@ pub struct Module {
     pub cost_scaling: f64,
     pub repeatable: bool,
     pub requires_modules: Vec<ModuleId>,
+    #[serde(default)]
+    pub requires_flag: Option<crate::flags::Flag>,
     pub unlocks: ModuleUnlocks,
 }
 

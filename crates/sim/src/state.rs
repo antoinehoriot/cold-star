@@ -473,6 +473,11 @@ impl GameState {
                         return Err(Rejected("missing prerequisite module"));
                     }
                 }
+                if let Some(flag) = module.requires_flag
+                    && !self.flags.contains(&flag)
+                {
+                    return Err(Rejected("jump theory is not yet understood"));
+                }
                 let n = self.built_count(id) as f64;
                 let cost: Vec<(ResourceKind, f64)> = module
                     .cost
@@ -493,6 +498,11 @@ impl GameState {
                 }
                 if module.unlocks.capacity_increase > 0.0 {
                     self.reactor.capacity += module.unlocks.capacity_increase;
+                }
+                if id == ModuleId::Shipyard {
+                    self.ship.built = true;
+                    self.flags.insert(Flag::ShipyardComplete);
+                    self.log_flavor("shipyard_complete", tuning);
                 }
                 self.sync_priority(world);
                 self.update_disclosure_flags(world);
@@ -721,6 +731,7 @@ mod tests {
                 cost_scaling: 1.0,
                 repeatable: false,
                 requires_modules: vec![],
+                requires_flag: None,
                 unlocks: ModuleUnlocks {
                     job: Some(JobId::Refiner),
                     ..Default::default()
@@ -735,6 +746,7 @@ mod tests {
                 cost_scaling: 1.6,
                 repeatable: true,
                 requires_modules: vec![],
+                requires_flag: None,
                 unlocks: ModuleUnlocks {
                     housing: 4,
                     ..Default::default()
@@ -749,6 +761,7 @@ mod tests {
                 cost_scaling: 1.0,
                 repeatable: false,
                 requires_modules: vec![],
+                requires_flag: None,
                 unlocks: ModuleUnlocks {
                     job: Some(JobId::Scientist),
                     ..Default::default()
@@ -763,6 +776,7 @@ mod tests {
                 cost_scaling: 1.0,
                 repeatable: false,
                 requires_modules: vec![],
+                requires_flag: None,
                 unlocks: ModuleUnlocks::default(),
             },
             Module {
@@ -774,6 +788,31 @@ mod tests {
                 cost_scaling: 1.0,
                 repeatable: false,
                 requires_modules: vec![],
+                requires_flag: None,
+                unlocks: ModuleUnlocks::default(),
+            },
+            Module {
+                id: ModuleId::Shipyard,
+                name: "Shipyard".into(),
+                description: "test".into(),
+                tier: 2,
+                cost: vec![(ResourceKind::Alloy, 10.0)],
+                cost_scaling: 1.0,
+                repeatable: false,
+                requires_modules: vec![],
+                requires_flag: Some(Flag::JumpTheoryKnown),
+                unlocks: ModuleUnlocks::default(),
+            },
+            Module {
+                id: ModuleId::SensorArray,
+                name: "Sensor Array".into(),
+                description: "test".into(),
+                tier: 2,
+                cost: vec![(ResourceKind::Alloy, 10.0)],
+                cost_scaling: 1.0,
+                repeatable: false,
+                requires_modules: vec![],
+                requires_flag: Some(Flag::JumpTheoryKnown),
                 unlocks: ModuleUnlocks::default(),
             },
         ])
@@ -1315,6 +1354,7 @@ mod tests {
             cost_scaling: 1.0,
             repeatable: false,
             requires_modules: vec![],
+            requires_flag: None,
             unlocks: ModuleUnlocks::default(),
         }]);
         let tc = techs();
@@ -1414,5 +1454,22 @@ mod tests {
             with.reactor.charge < without.reactor.charge,
             "thermal failure should drain charge faster"
         );
+    }
+
+    #[test]
+    fn shipyard_is_flag_gated_and_builds_the_ship() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.resources.add(ResourceKind::Alloy, 100.0);
+        // Without JumpTheoryKnown the build is refused.
+        assert_eq!(
+            s.apply(&w, Action::Build(ModuleId::Shipyard)),
+            Err(Rejected("jump theory is not yet understood"))
+        );
+        s.flags.insert(Flag::JumpTheoryKnown);
+        assert!(s.apply(&w, Action::Build(ModuleId::Shipyard)).is_ok());
+        assert!(s.ship.built);
+        assert!(s.flags.contains(&Flag::ShipyardComplete));
     }
 }
