@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Cumulative scrap salvaged that triggers the heavy-consumption uneasy note.
 const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
 
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 6;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
 /// not part of the saved state).
@@ -215,7 +215,7 @@ impl GameState {
     pub fn advance(&mut self, world: &World, ticks: u64) {
         let tuning = world.tuning;
         for _ in 0..ticks {
-            let before: [f64; 6] = ResourceKind::ALL.map(|k| self.resources.amount(k));
+            let before: [f64; 7] = ResourceKind::ALL.map(|k| self.resources.amount(k));
             let prev_status = self.reactor.status;
             self.tick += 1;
             if self.salvage_cooldown > 0 {
@@ -789,10 +789,10 @@ mod tests {
     }
 
     #[test]
-    fn new_game_is_versioned_v5() {
+    fn new_game_is_versioned_v6() {
         let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
         let s = GameState::new(&world(&t, &j, &m, &tc), 1);
-        assert_eq!(s.version, 5);
+        assert_eq!(s.version, 6);
         assert_eq!(s.resources.cap, t.resource_base_cap);
     }
 

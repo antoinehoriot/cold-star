@@ -11,17 +11,19 @@ pub enum ResourceKind {
     Rations,
     Components,
     Data,
+    Isotopes,
 }
 
 impl ResourceKind {
     /// All resource kinds, in declaration order. Deterministic iteration.
-    pub const ALL: [ResourceKind; 6] = [
+    pub const ALL: [ResourceKind; 7] = [
         ResourceKind::Scrap,
         ResourceKind::Alloy,
         ResourceKind::Fuel,
         ResourceKind::Rations,
         ResourceKind::Components,
         ResourceKind::Data,
+        ResourceKind::Isotopes,
     ];
 }
 
@@ -33,6 +35,7 @@ pub struct Resources {
     pub rations: f64,
     pub components: f64,
     pub data: f64,
+    pub isotopes: f64,
     /// Shared storage cap applied to every resource.
     pub cap: f64,
 }
@@ -46,6 +49,7 @@ impl Default for Resources {
             rations: 0.0,
             components: 0.0,
             data: 0.0,
+            isotopes: 0.0,
             cap: f64::INFINITY,
         }
     }
@@ -60,6 +64,7 @@ impl Resources {
             ResourceKind::Rations => &mut self.rations,
             ResourceKind::Components => &mut self.components,
             ResourceKind::Data => &mut self.data,
+            ResourceKind::Isotopes => &mut self.isotopes,
         }
     }
 
@@ -71,6 +76,7 @@ impl Resources {
             ResourceKind::Rations => self.rations,
             ResourceKind::Components => self.components,
             ResourceKind::Data => self.data,
+            ResourceKind::Isotopes => self.isotopes,
         }
     }
 
@@ -161,5 +167,22 @@ mod tests {
         assert!(r.try_spend_all(&[(ResourceKind::Alloy, 5.0), (ResourceKind::Data, 1.0)]));
         assert_eq!(r.amount(ResourceKind::Alloy), 5.0);
         assert_eq!(r.amount(ResourceKind::Data), 0.0);
+    }
+
+    #[test]
+    fn isotopes_is_a_capped_resource() {
+        let mut r = Resources::default();
+        r.set_cap(50.0);
+        let overflow = r.add(ResourceKind::Isotopes, 70.0);
+        assert_eq!(r.amount(ResourceKind::Isotopes), 50.0);
+        assert_eq!(overflow, 20.0);
+        assert!(r.try_spend(ResourceKind::Isotopes, 30.0));
+        assert_eq!(r.amount(ResourceKind::Isotopes), 20.0);
+    }
+
+    #[test]
+    fn all_has_seven_kinds_isotopes_last() {
+        assert_eq!(ResourceKind::ALL.len(), 7);
+        assert_eq!(ResourceKind::ALL[6], ResourceKind::Isotopes);
     }
 }

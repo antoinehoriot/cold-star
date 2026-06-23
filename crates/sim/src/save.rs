@@ -211,4 +211,15 @@ mod tests {
         let tampered = b64.encode(&framed);
         assert_eq!(decode(&tampered), Err(SaveError::Version(4)));
     }
+
+    #[test]
+    fn v5_payload_is_rejected() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let encoded = encode(&sample()).unwrap();
+        let mut framed = b64.decode(&encoded).unwrap();
+        framed[4..8].copy_from_slice(&5u32.to_le_bytes());
+        let tampered = b64.encode(&framed);
+        assert_eq!(decode(&tampered), Err(SaveError::Version(5)));
+    }
 }
