@@ -72,7 +72,7 @@ pub struct GameState {
     pub atmosphere_grace: u32,
     pub crew_loss_timer: u32,
     pub research_output_mult: BTreeMap<JobId, f64>,
-    pub total_salvaged: f64,
+    pub total_scrap_gained: f64,
 }
 
 impl GameState {
@@ -113,7 +113,7 @@ impl GameState {
             atmosphere_grace: tuning.atmosphere_grace_max,
             crew_loss_timer: 0,
             research_output_mult: BTreeMap::new(),
-            total_salvaged: 0.0,
+            total_scrap_gained: 0.0,
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -161,8 +161,8 @@ impl GameState {
         }
     }
 
-    /// Build the priority-ordered consumer list for power resolution, using
-    /// only consumers that exist (assignable jobs + life support if built).
+    /// Build the priority-ordered consumer list for power resolution, using only
+    /// consumers that exist (assignable jobs + Atmosphere/Thermal if built).
     fn ordered_consumers(&self, world: &World) -> Vec<PowerConsumer> {
         let mut list: Vec<PowerConsumer> = Vec::new();
         for &c in &self.priority.0 {
@@ -269,7 +269,7 @@ impl GameState {
             let scrap_after = self.resources.amount(ResourceKind::Scrap);
             let scrap_before = before[0]; // ResourceKind::ALL[0] == Scrap
             if scrap_after > scrap_before {
-                self.total_salvaged += scrap_after - scrap_before;
+                self.total_scrap_gained += scrap_after - scrap_before;
             }
 
             // --- research progress ---
@@ -626,7 +626,7 @@ impl GameState {
         {
             self.log.push(self.tick, "The dark has an other side, and you ache toward it.", tuning.log_capacity);
         }
-        if self.total_salvaged >= HEAVY_CONSUMPTION_SCRAP
+        if self.total_scrap_gained >= HEAVY_CONSUMPTION_SCRAP
             && self.codex.add(Discovery {
                 id: DiscoveryId::Note(NoteId::HeavyConsumption),
                 title: "What It Costs".into(),

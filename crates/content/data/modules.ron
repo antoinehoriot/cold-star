@@ -22,7 +22,7 @@
     ( id: Atmosphere, name: "Atmosphere",
       description: "Scrubbers and recyclers. The slow work of keeping the air breathable.",
       tier: 1, cost: [(Alloy, 15.0)], cost_scaling: 1.0, repeatable: false,
-      requires_modules: [], unlocks: ( passive_draw_per_crew: 0.2 ) ),
+      requires_modules: [], unlocks: () ),
     ( id: Thermal, name: "Thermal Regulation",
       description: "Heaters against the void. Without them the cold finds its way back in.",
       tier: 1, cost: [(Alloy, 12.0)], cost_scaling: 1.0, repeatable: false,
