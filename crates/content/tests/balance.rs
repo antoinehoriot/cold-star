@@ -11,21 +11,24 @@ fn setup() -> (
     sim::Tuning,
     sim::job::JobRegistry,
     sim::module::ModuleRegistry,
+    sim::research::TechRegistry,
 ) {
     (
         content::load().unwrap(),
         content::load_jobs().unwrap(),
         content::load_modules().unwrap(),
+        content::load_techs().unwrap(),
     )
 }
 
 #[test]
 fn salvager_economy_can_fund_a_refinery() {
-    let (t, j, m) = setup();
+    let (t, j, m, tc) = setup();
     let w = World {
         tuning: &t,
         jobs: &j,
         modules: &m,
+        techs: &tc,
     };
     let mut s = GameState::new(&w, 42);
 
@@ -59,11 +62,12 @@ fn salvager_economy_can_fund_a_refinery() {
 
 #[test]
 fn over_assigned_refiners_brownout_is_recoverable() {
-    let (t, j, m) = setup();
+    let (t, j, m, tc) = setup();
     let w = World {
         tuning: &t,
         jobs: &j,
         modules: &m,
+        techs: &tc,
     };
     let mut s = GameState::new(&w, 7);
     s.crew.total = 6;

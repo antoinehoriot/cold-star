@@ -71,6 +71,23 @@ impl Crew {
         true
     }
 
+    /// Remove one crew member. Idle crew go first; otherwise the lowest-JobId
+    /// assigned job loses one. Returns false if there is no crew at all.
+    pub fn lose_one(&mut self) -> bool {
+        if self.total == 0 {
+            return false;
+        }
+        if self.idle() == 0 {
+            // All assigned: take from the lowest JobId (BTreeMap ordered keys).
+            if let Some((&job, _)) = self.assignments.iter().find(|&(_, &n)| n > 0) {
+                let cur = self.assigned(job);
+                self.set(job, cur - 1);
+            }
+        }
+        self.total -= 1;
+        true
+    }
+
     fn set(&mut self, job: JobId, count: u32) {
         if count == 0 {
             self.assignments.remove(&job);
@@ -126,6 +143,22 @@ mod tests {
         assert!(c.assign(JobId::Salvager, -2));
         assert_eq!(c.assigned(JobId::Salvager), 1);
         assert_eq!(c.idle(), 2);
+    }
+
+    #[test]
+    fn lose_one_takes_idle_then_assigned() {
+        let mut c = Crew {
+            total: 2,
+            ..Crew::default()
+        };
+        c.assign(JobId::Salvager, 1); // 1 assigned, 1 idle
+        assert!(c.lose_one()); // idle removed
+        assert_eq!(c.total, 1);
+        assert_eq!(c.assigned(JobId::Salvager), 1);
+        assert!(c.lose_one()); // now from assigned
+        assert_eq!(c.total, 0);
+        assert_eq!(c.assigned(JobId::Salvager), 0);
+        assert!(!c.lose_one());
     }
 
     #[test]

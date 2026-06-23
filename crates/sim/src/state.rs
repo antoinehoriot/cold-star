@@ -3,6 +3,7 @@
 //! power budget, runs the two-phase economy, applies crew upkeep + arrivals, and
 //! updates reactor status + disclosure flags. Pure + deterministic.
 
+use crate::codex::{Codex, Discovery, DiscoveryId, NoteId};
 use crate::config::Tuning;
 use crate::crew::Crew;
 use crate::economy::run_economy;
@@ -14,13 +15,17 @@ use crate::origin::{Origin, OriginDef, default_origin_def};
 use crate::power::{PowerConsumer, resolve_power};
 use crate::priority::{Consumer, Priority};
 use crate::reactor::{Reactor, ReactorStatus};
+use crate::research::{ActiveResearch, Grant, Research, TechId};
 use crate::resources::{ResourceKind, Resources};
 use crate::rng::Rng;
 use crate::telemetry::Telemetry;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SAVE_VERSION: u32 = 4;
+/// Cumulative scrap salvaged that triggers the heavy-consumption uneasy note.
+const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
+
+pub const SAVE_VERSION: u32 = 5;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
 /// not part of the saved state).
@@ -28,6 +33,7 @@ pub struct World<'a> {
     pub tuning: &'a Tuning,
     pub jobs: &'a JobRegistry,
     pub modules: &'a ModuleRegistry,
+    pub techs: &'a crate::research::TechRegistry,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,6 +45,7 @@ pub enum Action {
     Build(ModuleId),
     AssignCrew { job: JobId, delta: i32 },
     SetPriority { consumer: Consumer, up: bool },
+    StartResearch(TechId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +67,12 @@ pub struct GameState {
     pub built: BTreeMap<ModuleId, u32>,
     pub priority: Priority,
     pub telemetry: Telemetry,
+    pub research: Research,
+    pub codex: Codex,
+    pub atmosphere_grace: u32,
+    pub crew_loss_timer: u32,
+    pub research_output_mult: BTreeMap<JobId, f64>,
+    pub total_salvaged: f64,
 }
 
 impl GameState {
@@ -95,6 +108,12 @@ impl GameState {
             built: BTreeMap::new(),
             priority: Priority::default(),
             telemetry: Telemetry::default(),
+            research: Research::default(),
+            codex: Codex::default(),
+            atmosphere_grace: tuning.atmosphere_grace_max,
+            crew_loss_timer: 0,
+            research_output_mult: BTreeMap::new(),
+            total_salvaged: 0.0,
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -231,15 +250,95 @@ impl GameState {
             self.reactor
                 .set_from_power(outcome.new_charge, overdrawn, tuning);
 
+            // --- thermal failure: unpowered thermal lets the cold creep back ---
+            if self.has_module(ModuleId::Thermal) && outcome.paused.contains(&Consumer::Thermal) {
+                self.reactor.drain(tuning.thermal_failure_drain, tuning);
+            }
+
             // --- economy (two-phase) ---
             let report = run_economy(
                 &self.crew.assignments,
                 world.jobs,
                 &outcome.paused,
                 efficiency,
-                &std::collections::BTreeMap::new(), // TODO Task 6: replace with &self.research_output_mult
+                &self.research_output_mult,
                 &mut self.resources,
             );
+
+            // Track cumulative scrap gained this tick (for the heavy-consumption note).
+            let scrap_after = self.resources.amount(ResourceKind::Scrap);
+            let scrap_before = before[0]; // ResourceKind::ALL[0] == Scrap
+            if scrap_after > scrap_before {
+                self.total_salvaged += scrap_after - scrap_before;
+            }
+
+            // --- research progress ---
+            if let Some(active) = self.research.active.as_mut() {
+                if active.ticks_remaining > 0 {
+                    active.ticks_remaining -= 1;
+                }
+                if active.ticks_remaining == 0 {
+                    let id = active.tech;
+                    self.research.active = None;
+                    self.research.completed.insert(id);
+                    if let Some(tech) = world.techs.get(id) {
+                        let grant = tech.grant.clone();
+                        self.apply_grant(&grant);
+                        let (name, lore) = (tech.name.clone(), tech.lore.clone());
+                        self.log.push(
+                            self.tick,
+                            format!("Research complete: {name}"),
+                            tuning.log_capacity,
+                        );
+                        self.codex.add(Discovery {
+                            id: DiscoveryId::Tech(id),
+                            title: name,
+                            text: lore,
+                            tick: self.tick,
+                        });
+                    }
+                }
+            }
+
+            // --- atmosphere failure: survival clock -> crew loss ---
+            let atmosphere_failing = self.has_module(ModuleId::Atmosphere)
+                && self.crew.total > 0
+                && (self.reactor.status == ReactorStatus::Cold
+                    || outcome.paused.contains(&Consumer::Atmosphere));
+            if atmosphere_failing {
+                if self.atmosphere_grace > 0 {
+                    self.atmosphere_grace -= 1;
+                    if self.atmosphere_grace == 0 {
+                        self.crew_loss_timer = tuning.crew_loss_interval;
+                        self.log.push(
+                            self.tick,
+                            "ATMOSPHERE FAILING. The air is going.",
+                            tuning.log_capacity,
+                        );
+                    }
+                } else {
+                    // Clock exhausted: lose a crew every crew_loss_interval ticks.
+                    if self.crew_loss_timer > 0 {
+                        self.crew_loss_timer -= 1;
+                    }
+                    if self.crew_loss_timer == 0 && self.crew.lose_one() {
+                        self.crew_loss_timer = tuning.crew_loss_interval;
+                        self.note_first_crew_death(tuning);
+                        self.log.push(
+                            self.tick,
+                            "Someone stops breathing in the dark.",
+                            tuning.log_capacity,
+                        );
+                    }
+                }
+            } else {
+                // Powered again: reset the clock.
+                self.atmosphere_grace = tuning.atmosphere_grace_max;
+                self.crew_loss_timer = 0;
+            }
+
+            // --- triggered narrative notes (each fires once) ---
+            self.check_triggered_notes(tuning);
 
             // --- crew arrivals (capped by housing) ---
             let housing = self.housing(world);
@@ -395,6 +494,34 @@ impl GameState {
                 }
                 Ok(())
             }
+            Action::StartResearch(id) => {
+                if !self.has_module(ModuleId::Lab) {
+                    return Err(Rejected("no lab to research in"));
+                }
+                let tech = world.techs.get(id).ok_or(Rejected("unknown tech"))?;
+                if self.research.is_completed(id) {
+                    return Err(Rejected("already researched"));
+                }
+                if self.research.active.is_some() {
+                    return Err(Rejected("research already in progress"));
+                }
+                if !tech.requires.iter().all(|r| self.research.is_completed(*r)) {
+                    return Err(Rejected("missing prerequisite research"));
+                }
+                if !self.resources.try_spend(ResourceKind::Data, tech.data_cost) {
+                    return Err(Rejected("not enough data"));
+                }
+                self.research.active = Some(ActiveResearch {
+                    tech: id,
+                    ticks_remaining: tech.research_ticks,
+                });
+                self.log.push(
+                    self.tick,
+                    format!("Research begun: {}", tech.name),
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
         }
     }
 
@@ -442,6 +569,72 @@ impl GameState {
         }
         if self.resources.data > 0.0 {
             self.flags.insert(Flag::Tier2Unlocked);
+        }
+        // M3 disclosure.
+        if self.has_module(ModuleId::Lab) {
+            self.flags.insert(Flag::ResearchUnlocked);
+        }
+        if !self.codex.entries.is_empty() {
+            self.flags.insert(Flag::CodexUnlocked);
+        }
+    }
+
+    fn apply_grant(&mut self, grant: &Grant) {
+        match grant {
+            Grant::ReactorMaxOutput(v) => self.reactor.max_output += v,
+            Grant::ReactorCapacity(v) => self.reactor.capacity += v,
+            Grant::ResourceCapBonus(v) => {
+                let c = self.resources.cap + v;
+                self.resources.set_cap(c);
+            }
+            Grant::JobOutputMult { job, mult } => {
+                let e = self.research_output_mult.entry(*job).or_insert(1.0);
+                *e *= mult;
+            }
+            Grant::SetFlag(f) => {
+                self.flags.insert(*f);
+            }
+        }
+    }
+
+    fn note_first_crew_death(&mut self, tuning: &Tuning) {
+        let added = self.codex.add(Discovery {
+            id: DiscoveryId::Note(NoteId::FirstCrewDeath),
+            title: "The First Loss".into(),
+            text: "You kept the work going and the air ran out anyway. Whoever they were, the dark has them now. You note the gap in the roster and move on. There is always more to do.".into(),
+            tick: self.tick,
+        });
+        if added {
+            self.log.push(
+                self.tick,
+                "Something in you goes quiet.",
+                tuning.log_capacity,
+            );
+        }
+    }
+
+    /// State-checked uneasy notes (JumpTheory glimpse, heavy extraction). Each
+    /// fires exactly once via `Codex::add` dedup. Called once per tick.
+    fn check_triggered_notes(&mut self, tuning: &Tuning) {
+        if self.flags.contains(&Flag::JumpTheoryKnown)
+            && self.codex.add(Discovery {
+                id: DiscoveryId::Note(NoteId::JumpTheoryGlimpse),
+                title: "A Way Out".into(),
+                text: "The route resolves into something you could actually fly. You catch yourself wanting it badly, the way a thing wants to spread. You wonder, briefly, whether the wanting is yours.".into(),
+                tick: self.tick,
+            })
+        {
+            self.log.push(self.tick, "The dark has an other side, and you ache toward it.", tuning.log_capacity);
+        }
+        if self.total_salvaged >= HEAVY_CONSUMPTION_SCRAP
+            && self.codex.add(Discovery {
+                id: DiscoveryId::Note(NoteId::HeavyConsumption),
+                title: "What It Costs".into(),
+                text: "You tally what you have torn loose to get this far. The moon is lighter for your being here. You tell yourself it was only scrap, only rock. You are good at telling yourself things.".into(),
+                tick: self.tick,
+            })
+        {
+            self.log.push(self.tick, "The pile of what you've taken has its own weight.", tuning.log_capacity);
         }
     }
 }
@@ -515,40 +708,88 @@ mod tests {
                     ..Default::default()
                 },
             },
+            Module {
+                id: ModuleId::Lab,
+                name: "Lab".into(),
+                description: "test".into(),
+                tier: 2,
+                cost: vec![(ResourceKind::Scrap, 20.0)],
+                cost_scaling: 1.0,
+                repeatable: false,
+                requires_modules: vec![],
+                unlocks: ModuleUnlocks {
+                    job: Some(JobId::Scientist),
+                    ..Default::default()
+                },
+            },
         ])
     }
-    fn world<'a>(t: &'a Tuning, j: &'a JobRegistry, m: &'a ModuleRegistry) -> World<'a> {
+    fn techs() -> crate::research::TechRegistry {
+        use crate::research::{Grant, Tech, TechId};
+        crate::research::TechRegistry(vec![
+            Tech {
+                id: TechId::CoreTuning,
+                name: "Core Tuning".into(),
+                blurb: "".into(),
+                data_cost: 5.0,
+                research_ticks: 3,
+                requires: vec![],
+                grant: Grant::ReactorMaxOutput(2.0),
+                lore: "lore".into(),
+            },
+            Tech {
+                id: TechId::RefinedProcesses,
+                name: "Refined".into(),
+                blurb: "".into(),
+                data_cost: 6.0,
+                research_ticks: 2,
+                requires: vec![],
+                grant: Grant::JobOutputMult {
+                    job: JobId::Salvager,
+                    mult: 2.0,
+                },
+                lore: "lore".into(),
+            },
+        ])
+    }
+    fn world<'a>(
+        t: &'a Tuning,
+        j: &'a JobRegistry,
+        m: &'a ModuleRegistry,
+        tc: &'a crate::research::TechRegistry,
+    ) -> World<'a> {
         World {
             tuning: t,
             jobs: j,
             modules: m,
+            techs: tc,
         }
     }
 
     #[test]
-    fn new_game_is_versioned_v4() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let s = GameState::new(&world(&t, &j, &m), 1);
-        assert_eq!(s.version, 4);
+    fn new_game_is_versioned_v5() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let s = GameState::new(&world(&t, &j, &m, &tc), 1);
+        assert_eq!(s.version, 5);
         assert_eq!(s.resources.cap, t.resource_base_cap);
     }
 
     #[test]
     fn advance_n_equals_n_times_advance_1() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let mut bulk = GameState::new(&world(&t, &j, &m), 1);
-        let mut step = GameState::new(&world(&t, &j, &m), 1);
-        bulk.advance(&world(&t, &j, &m), 25);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let mut bulk = GameState::new(&world(&t, &j, &m, &tc), 1);
+        let mut step = GameState::new(&world(&t, &j, &m, &tc), 1);
+        bulk.advance(&world(&t, &j, &m, &tc), 25);
         for _ in 0..25 {
-            step.advance(&world(&t, &j, &m), 1);
+            step.advance(&world(&t, &j, &m, &tc), 1);
         }
         assert_eq!(bulk, step);
     }
 
     #[test]
     fn build_refinery_unlocks_refiner_assignment() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         // Need scrap + idle crew.
         s.resources.add(ResourceKind::Scrap, 30.0);
@@ -581,8 +822,8 @@ mod tests {
 
     #[test]
     fn repeatable_build_scales_cost() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         s.resources.add(ResourceKind::Scrap, 100.0);
         let before = s.resources.scrap;
@@ -596,8 +837,8 @@ mod tests {
 
     #[test]
     fn assigned_salvagers_produce_scrap_over_time() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         s.crew.total = 2;
         s.apply(
@@ -615,8 +856,8 @@ mod tests {
 
     #[test]
     fn priority_reorder_via_action() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         let c = Consumer::Job(JobId::Refiner);
         let before = s.priority.rank(c).unwrap();
@@ -640,8 +881,8 @@ mod tests {
 
     #[test]
     fn advance_accumulates_ticks() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         s.advance(&w, 5);
         assert_eq!(s.tick, 5);
@@ -649,8 +890,8 @@ mod tests {
 
     #[test]
     fn ignite_only_from_cold() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let origin = OriginDef {
             start: crate::origin::OriginStart {
                 scrap: 0.0,
@@ -672,8 +913,8 @@ mod tests {
 
     #[test]
     fn feed_rejected_without_scrap() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         assert_eq!(s.resources.scrap, 0.0);
         assert_eq!(
@@ -684,8 +925,8 @@ mod tests {
 
     #[test]
     fn salvage_sets_cooldown_and_blocks_repeat() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         assert!(s.apply(&w, Action::Salvage).is_ok());
         assert_eq!(s.salvage_cooldown, t.salvage_cooldown_ticks);
@@ -700,8 +941,8 @@ mod tests {
 
     #[test]
     fn crew_source_requires_availability_and_scrap() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         assert_eq!(
             s.apply(&w, Action::ActivateCrewSource),
@@ -723,8 +964,8 @@ mod tests {
 
     #[test]
     fn hot_start_below_establish_is_igniting_and_unlocked() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let origin = OriginDef {
             start: crate::origin::OriginStart {
                 scrap: 15.0,
@@ -742,8 +983,8 @@ mod tests {
 
     #[test]
     fn telemetry_records_last_tick() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1);
         s.crew.total = 2;
         s.resources.rations = 1.0; // ensure crew are not starving (upkeep = 2 × 0.1 = 0.2)
@@ -773,12 +1014,12 @@ mod tests {
 
     #[test]
     fn telemetry_is_deterministic_across_batching() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let mut bulk = GameState::new(&world(&t, &j, &m), 1);
-        let mut step = GameState::new(&world(&t, &j, &m), 1);
-        bulk.advance(&world(&t, &j, &m), 10);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let mut bulk = GameState::new(&world(&t, &j, &m, &tc), 1);
+        let mut step = GameState::new(&world(&t, &j, &m, &tc), 1);
+        bulk.advance(&world(&t, &j, &m, &tc), 10);
         for _ in 0..10 {
-            step.advance(&world(&t, &j, &m), 1);
+            step.advance(&world(&t, &j, &m, &tc), 1);
         }
         assert_eq!(bulk.telemetry, step.telemetry);
         assert_eq!(bulk, step);
@@ -786,8 +1027,8 @@ mod tests {
 
     #[test]
     fn m2_disclosure_flags_set_at_milestones() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 1); // full-charge default origin -> established
         // BuildMenuUnlocked is set once the core is established.
         assert!(s.flags.contains(&Flag::BuildMenuUnlocked));
@@ -824,8 +1065,8 @@ mod tests {
 
     #[test]
     fn m2_flag_graph_is_reachable_from_a_running_core() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
-        let w = world(&t, &j, &m);
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
         // A full-charge default origin is already established (BuildMenuUnlocked).
         let mut s = GameState::new(&w, 1);
         assert!(s.flags.contains(&Flag::BuildMenuUnlocked));
@@ -867,7 +1108,7 @@ mod tests {
 
     #[test]
     fn unfuelled_core_drains_to_failing_then_cold_with_log() {
-        let (t, j, m) = (Tuning::default(), jobs(), modules());
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
         let mut flavor = std::collections::BTreeMap::new();
         flavor.insert("failing".to_string(), "FAILING".to_string());
         flavor.insert("cold".to_string(), "COLD".to_string());
@@ -880,12 +1121,91 @@ mod tests {
             },
             ..default_origin_def(&t)
         };
-        let w = world(&t, &j, &m);
+        let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new_with_origin(&origin, &w, 1);
         // No fuel, no jobs: the baseline reactor load drains charge to Cold.
         s.advance(&w, 130);
         let texts: Vec<_> = s.log.entries().iter().map(|e| e.text.clone()).collect();
         assert!(texts.iter().any(|x| x == "FAILING"));
         assert!(texts.iter().any(|x| x == "COLD"));
+    }
+
+    #[test]
+    fn research_completes_and_applies_grant() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.apply(&w, Action::Build(ModuleId::Lab))
+            .expect_err("no scrap"); // (built later)
+        // Give scrap to build Lab, and data to research.
+        s.resources.add(ResourceKind::Scrap, 50.0);
+        s.apply(&w, Action::Build(ModuleId::Lab)).unwrap();
+        s.resources.add(ResourceKind::Data, 10.0);
+        let before_out = s.reactor.max_output;
+        s.apply(&w, Action::StartResearch(TechId::CoreTuning))
+            .unwrap();
+        assert!(s.research.active.is_some());
+        // research_ticks = 3 in the test registry.
+        s.advance(&w, 3);
+        assert!(s.research.is_completed(TechId::CoreTuning));
+        assert_eq!(s.reactor.max_output, before_out + 2.0);
+        assert!(
+            s.codex
+                .has(crate::codex::DiscoveryId::Tech(TechId::CoreTuning))
+        );
+        assert!(s.flags.contains(&Flag::CodexUnlocked));
+    }
+
+    #[test]
+    fn research_one_slot_and_prereq_and_data() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.resources.add(ResourceKind::Scrap, 50.0);
+        s.apply(&w, Action::Build(ModuleId::Lab)).unwrap();
+        // No data yet.
+        assert_eq!(
+            s.apply(&w, Action::StartResearch(TechId::CoreTuning)),
+            Err(Rejected("not enough data"))
+        );
+        s.resources.add(ResourceKind::Data, 100.0);
+        s.apply(&w, Action::StartResearch(TechId::CoreTuning))
+            .unwrap();
+        // One slot.
+        assert_eq!(
+            s.apply(&w, Action::StartResearch(TechId::RefinedProcesses)),
+            Err(Rejected("research already in progress"))
+        );
+    }
+
+    #[test]
+    fn job_output_mult_grant_boosts_economy() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.resources.add(ResourceKind::Scrap, 50.0);
+        s.apply(&w, Action::Build(ModuleId::Lab)).unwrap();
+        s.resources.add(ResourceKind::Data, 100.0);
+        s.apply(&w, Action::StartResearch(TechId::RefinedProcesses))
+            .unwrap();
+        s.advance(&w, 2); // completes; Salvager mult x2.0 in test registry
+        assert_eq!(
+            s.research_output_mult.get(&JobId::Salvager).copied(),
+            Some(2.0)
+        );
+        s.crew.total = 1;
+        s.resources.add(ResourceKind::Rations, 10.0); // prevent starving efficiency
+        s.apply(
+            &w,
+            Action::AssignCrew {
+                job: JobId::Salvager,
+                delta: 1,
+            },
+        )
+        .unwrap();
+        let before = s.resources.amount(ResourceKind::Scrap);
+        s.advance(&w, 1);
+        // 1 salvager x1 base x mult 2.0 = +2 scrap this tick.
+        assert!((s.resources.amount(ResourceKind::Scrap) - before - 2.0).abs() < 1e-9);
     }
 }
