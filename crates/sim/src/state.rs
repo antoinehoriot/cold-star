@@ -479,6 +479,7 @@ mod tests {
             Module {
                 id: ModuleId::Refinery,
                 name: "Refinery".into(),
+                description: "test".into(),
                 tier: 1,
                 cost: vec![(ResourceKind::Scrap, 20.0)],
                 cost_scaling: 1.0,
@@ -492,6 +493,7 @@ mod tests {
             Module {
                 id: ModuleId::Quarters,
                 name: "Quarters".into(),
+                description: "test".into(),
                 tier: 1,
                 cost: vec![(ResourceKind::Scrap, 10.0)],
                 cost_scaling: 1.6,

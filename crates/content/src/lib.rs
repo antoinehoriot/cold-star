@@ -162,6 +162,12 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
         }
     }
     for m in reg.iter() {
+        if m.description.trim().is_empty() {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: description must not be empty",
+                m.id
+            )));
+        }
         if m.cost.iter().any(|&(_, a)| !a.is_finite() || a < 0.0) {
             return Err(ContentError::Invalid(format!(
                 "{:?}: cost amounts must be finite >= 0",
@@ -234,6 +240,14 @@ mod tests {
 
         let mods = load_modules().unwrap();
         assert_eq!(mods.0.len(), 10);
+        // Every module has a non-empty narrative description (the build tooltip).
+        for m in mods.iter() {
+            assert!(
+                !m.description.trim().is_empty(),
+                "{:?} missing description",
+                m.id
+            );
+        }
         // Lab is tier 2 but is NOT Data-gated (it unlocks the Scientist that
         // PRODUCES Data — gating it on Data would deadlock).
         let lab = mods.get(sim::module::ModuleId::Lab).unwrap();

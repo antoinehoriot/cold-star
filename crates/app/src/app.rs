@@ -65,6 +65,9 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .idle { color: #6fd6a0; font-size: .8rem; margin-bottom: .5rem; }
 .starving { color: #d66f6f; font-size: .8rem; margin-bottom: .5rem; }
 .cost { color: #9fb3c2; font-size: .78rem; }
+.info { font-style: italic; min-width: 1.6rem; color: #6fb7d6; }
+.build-desc { font-size: .78rem; color: #9fb3c2; line-height: 1.45;
+  border-left: 2px solid #1d4456; padding: .1rem 0 .4rem .6rem; margin: 0 0 .4rem; }
 ";
 
 #[component]
@@ -162,13 +165,16 @@ fn JobPanel(
 
 #[component]
 fn BuildMenu(
-    rows: Vec<(sim::module::ModuleId, String, String, u32, bool)>,
+    rows: Vec<(sim::module::ModuleId, String, String, String, u32, bool)>,
     on_build: EventHandler<sim::module::ModuleId>,
 ) -> Element {
+    // Which module's narrative info line is currently expanded (toggled by its
+    // (i) button). None = all collapsed.
+    let mut info_open = use_signal(|| None::<sim::module::ModuleId>);
     rsx! {
         div { class: "panel",
             div { class: "panel-title", "BUILD" }
-            for (id, name, cost, n, affordable) in rows {
+            for (id, name, description, cost, n, affordable) in rows {
                 div { class: "build-row",
                     span {
                         "{name}"
@@ -177,6 +183,15 @@ fn BuildMenu(
                     }
                     span {
                         button {
+                            class: "mini info",
+                            title: "What is this?",
+                            onclick: move |_| {
+                                let next = if info_open() == Some(id) { None } else { Some(id) };
+                                info_open.set(next);
+                            },
+                            "i"
+                        }
+                        button {
                             class: "mini",
                             disabled: !affordable,
                             onclick: move |_| on_build.call(id),
@@ -184,6 +199,9 @@ fn BuildMenu(
                         }
                         if !affordable { span { class: "muted", " (can't afford)" } }
                     }
+                }
+                if info_open() == Some(id) {
+                    div { class: "build-desc", "{description}" }
                 }
             }
         }
@@ -339,7 +357,7 @@ fn Console(
             (j.id, j.name.clone(), count, count > 0, dark)
         })
         .collect();
-    let build_rows: Vec<(sim::module::ModuleId, String, String, u32, bool)> = modules
+    let build_rows: Vec<(sim::module::ModuleId, String, String, String, u32, bool)> = modules
         .read()
         .iter()
         .filter(|m| {
@@ -362,7 +380,14 @@ fn Console(
             let affordable = scaled_cost
                 .iter()
                 .all(|(k, a)| gs.resources.amount(*k) >= *a);
-            (m.id, m.name.clone(), cost, n, affordable)
+            (
+                m.id,
+                m.name.clone(),
+                m.description.clone(),
+                cost,
+                n,
+                affordable,
+            )
         })
         .collect();
     let prio_rows: Vec<(sim::priority::Consumer, String, bool, bool)> = {

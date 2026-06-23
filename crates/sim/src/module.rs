@@ -33,6 +33,8 @@ pub struct ModuleUnlocks {
 pub struct Module {
     pub id: ModuleId,
     pub name: String,
+    /// One-sentence in-world description, shown as a pre-build tooltip.
+    pub description: String,
     pub tier: u8,
     pub cost: Vec<(ResourceKind, f64)>,
     pub cost_scaling: f64,
