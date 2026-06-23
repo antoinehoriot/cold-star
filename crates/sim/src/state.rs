@@ -54,6 +54,7 @@ pub enum Action {
     StartResearch(TechId),
     UpgradeDrive,
     Jump(crate::galaxy::SystemId),
+    ScanSystem(crate::galaxy::SystemId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -590,6 +591,31 @@ impl GameState {
                 );
                 Ok(())
             }
+            Action::ScanSystem(target) => {
+                if !self.has_module(ModuleId::SensorArray) {
+                    return Err(Rejected("no sensor array to scan with"));
+                }
+                if self.expedition.activity.is_some() {
+                    return Err(Rejected("the ship is already busy"));
+                }
+                if !self.galaxy_state.revealed.contains(&target.0) {
+                    return Err(Rejected("that system is not on the map"));
+                }
+                if self.galaxy_state.scanned.contains(&target.0) {
+                    return Err(Rejected("already scanned"));
+                }
+                if !self
+                    .resources
+                    .try_spend(ResourceKind::Data, tuning.scan_data_cost)
+                {
+                    return Err(Rejected("not enough data to scan"));
+                }
+                self.expedition.activity = Some(Activity::Scan {
+                    target,
+                    ticks: tuning.scan_ticks,
+                });
+                Ok(())
+            }
             Action::Jump(target) => {
                 if self.expedition.activity.is_some() {
                     return Err(Rejected("the ship is already busy"));
@@ -669,7 +695,27 @@ impl GameState {
                     tuning.log_capacity,
                 );
             }
-            // Scan / ResolveSite / Scavenge arms added in later tasks.
+            Activity::Scan { target, .. } => {
+                self.galaxy_state.scanned.insert(target.0);
+                let galaxy = self.galaxy(world);
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    self.galaxy_state.sites.entry(target.0)
+                    && let Some(sys) = galaxy.get(target)
+                {
+                    e.insert(materialize_sites(
+                        self.world_seed,
+                        target.0,
+                        sys.star_type,
+                        tuning,
+                    ));
+                }
+                self.log.push(
+                    self.tick,
+                    "The scan resolves. You see what waits there now.",
+                    tuning.log_capacity,
+                );
+            }
+            // ResolveSite / Scavenge arms added in later tasks.
             other => {
                 // Re-store unhandled activity kinds until their task lands.
                 self.expedition.activity = Some(other);
@@ -1638,6 +1684,32 @@ mod tests {
             s.resources.amount(ResourceKind::Isotopes),
             100.0 - t.drive_upgrade_isotopes
         );
+    }
+
+    #[test]
+    fn scan_needs_sensor_costs_data_and_reveals_contents() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 4);
+        let target = a_reachable_target(&s, &w);
+        s.resources.add(ResourceKind::Data, 100.0);
+        // No sensor array yet.
+        assert_eq!(
+            s.apply(&w, Action::ScanSystem(target)),
+            Err(Rejected("no sensor array to scan with"))
+        );
+        s.flags.insert(Flag::JumpTheoryKnown);
+        s.resources.add(ResourceKind::Alloy, 100.0);
+        s.apply(&w, Action::Build(ModuleId::SensorArray)).unwrap();
+        let data_before = s.resources.amount(ResourceKind::Data);
+        s.apply(&w, Action::ScanSystem(target)).unwrap();
+        assert!(
+            (data_before - s.resources.amount(ResourceKind::Data) - t.scan_data_cost).abs() < 1e-9
+        );
+        s.advance(&w, t.scan_ticks as u64);
+        assert!(s.galaxy_state.scanned.contains(&target.0));
+        assert!(s.galaxy_state.sites.contains_key(&target.0));
+        assert!(s.expedition.activity.is_none());
     }
 
     #[test]
