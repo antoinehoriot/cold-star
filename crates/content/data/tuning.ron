@@ -20,4 +20,9 @@
     crew_ration_upkeep: 0.1,
     starving_efficiency: 0.5,
     base_housing: 4,
+    atmosphere_draw_per_crew: 0.2,
+    atmosphere_grace_max: 30,
+    crew_loss_interval: 10,
+    thermal_draw: 1.0,
+    thermal_failure_drain: 2.0,
 )

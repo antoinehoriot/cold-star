@@ -106,6 +106,25 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     if t.base_housing < 1 {
         return Err(ContentError::Invalid("base_housing must be >= 1".into()));
     }
+    for (name, v) in [
+        ("atmosphere_draw_per_crew", t.atmosphere_draw_per_crew),
+        ("thermal_draw", t.thermal_draw),
+        ("thermal_failure_drain", t.thermal_failure_drain),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
+    if t.atmosphere_grace_max < 1 {
+        return Err(ContentError::Invalid(
+            "atmosphere_grace_max must be >= 1".into(),
+        ));
+    }
+    if t.crew_loss_interval < 1 {
+        return Err(ContentError::Invalid(
+            "crew_loss_interval must be >= 1".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -358,5 +377,15 @@ mod tests {
         assert_eq!(t.starving_efficiency, 0.5);
         assert_eq!(t.base_housing, 4);
         assert_eq!(t.reactor_baseline_draw, 1.0);
+    }
+
+    #[test]
+    fn loads_m3_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.atmosphere_draw_per_crew, 0.2);
+        assert_eq!(t.atmosphere_grace_max, 30);
+        assert_eq!(t.crew_loss_interval, 10);
+        assert_eq!(t.thermal_draw, 1.0);
+        assert_eq!(t.thermal_failure_drain, 2.0);
     }
 }

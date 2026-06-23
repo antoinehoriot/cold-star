@@ -57,6 +57,18 @@ pub struct Tuning {
     pub starving_efficiency: f64,
     /// Base crew housing cap (raised by Quarters).
     pub base_housing: u32,
+
+    // M3 — life support
+    /// Atmosphere power draw per crew per tick.
+    pub atmosphere_draw_per_crew: f64,
+    /// Ticks the atmosphere survival clock lasts while unpowered before crew die.
+    pub atmosphere_grace_max: u32,
+    /// Ticks between crew deaths once the atmosphere clock is exhausted.
+    pub crew_loss_interval: u32,
+    /// Thermal system flat power draw per tick.
+    pub thermal_draw: f64,
+    /// Extra reactor charge lost per tick while thermal is built but unpowered.
+    pub thermal_failure_drain: f64,
 }
 
 impl Default for Tuning {
@@ -83,6 +95,11 @@ impl Default for Tuning {
             crew_ration_upkeep: 0.1,
             starving_efficiency: 0.5,
             base_housing: 4,
+            atmosphere_draw_per_crew: 0.2,
+            atmosphere_grace_max: 30,
+            crew_loss_interval: 10,
+            thermal_draw: 1.0,
+            thermal_failure_drain: 2.0,
         }
     }
 }
