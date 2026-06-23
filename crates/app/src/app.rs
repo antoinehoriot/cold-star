@@ -69,6 +69,15 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .info { font-style: italic; min-width: 1.6rem; color: #6fb7d6; }
 .build-desc { font-size: .78rem; color: #9fb3c2; line-height: 1.45;
   border-left: 2px solid #1d4456; padding: .1rem 0 .4rem .6rem; margin: 0 0 .4rem; }
+.research-row { display: flex; justify-content: space-between; align-items: center; font-size: .85rem; padding: .25rem 0; gap: .5rem; }
+.research-name { color: #c7d3dd; }
+.research-done { color: #6fd6a0; }
+.research-locked { color: #5b7686; }
+.research-blurb { color: #9fb3c2; font-size: .76rem; }
+.research-cost { color: #9fb3c2; font-size: .76rem; }
+.research-active { border-left: 2px solid #2f6a80; padding-left: .6rem; margin: .3rem 0; }
+.rbar { height: 6px; background: #0c1822; border-radius: 3px; overflow: hidden; margin: .3rem 0; }
+.rbar > span { display: block; height: 100%; background: #6fb7d6; }
 ";
 
 #[component]
@@ -224,6 +233,70 @@ fn PriorityPanel(
                     span {
                         button { class: "mini", disabled: is_first, onclick: move |_| on_move.call((c, true)), "\u{25b2}" }
                         button { class: "mini", disabled: is_last, onclick: move |_| on_move.call((c, false)), "\u{25bc}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ResearchPanel(
+    // active: (name, ticks_remaining, ticks_total) when something is researching
+    active: Option<(String, u32, u32)>,
+    // rows: (id, name, blurb, data_cost, research_ticks, state, affordable) where state is
+    // "done" | "available" | "locked"; available rows are startable iff affordable
+    rows: Vec<(
+        sim::research::TechId,
+        String,
+        String,
+        f64,
+        u32,
+        &'static str,
+        bool,
+    )>,
+    on_start: EventHandler<sim::research::TechId>,
+) -> Element {
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "RESEARCH" }
+            if let Some((name, rem, total)) = active {
+                {
+                    let done = total.saturating_sub(rem);
+                    let pct = if total > 0 { (done as f64 / total as f64 * 100.0).clamp(0.0, 100.0) } else { 0.0 };
+                    rsx! {
+                        div { class: "research-active",
+                            div { class: "research-name", "Researching: {name}  ({rem}s left)" }
+                            div { class: "rbar", span { style: "width: {pct}%" } }
+                        }
+                    }
+                }
+            }
+            for (id, name, blurb, cost, ticks, st, affordable) in rows {
+                div { class: "research-row",
+                    span {
+                        span {
+                            class: match st { "done" => "research-done", "locked" => "research-locked", _ => "research-name" },
+                            "{name}"
+                        }
+                        div { class: "research-blurb", "{blurb}" }
+                        if st == "available" {
+                            div { class: "research-cost", "{cost:.0} Data  \u{00b7}  {ticks}s" }
+                        }
+                    }
+                    span {
+                        if st == "done" {
+                            span { class: "research-done", "\u{2713}" }
+                        } else if st == "available" {
+                            button {
+                                class: "mini",
+                                disabled: !affordable,
+                                onclick: move |_| on_start.call(id),
+                                "research"
+                            }
+                        } else {
+                            span { class: "research-locked", "locked" }
+                        }
                     }
                 }
             }
@@ -416,6 +489,57 @@ fn Console(
             })
             .collect()
     };
+    let research_unlocked = gs.flags.contains(&Flag::ResearchUnlocked);
+    let data_amt = gs.resources.data;
+    let research_active: Option<(String, u32, u32)> = gs.research.active.as_ref().map(|a| {
+        let total = techs
+            .read()
+            .iter()
+            .find(|t| t.id == a.tech)
+            .map(|t| t.research_ticks)
+            .unwrap_or(a.ticks_remaining);
+        let name = techs
+            .read()
+            .iter()
+            .find(|t| t.id == a.tech)
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| format!("{:?}", a.tech));
+        (name, a.ticks_remaining, total)
+    });
+    let research_busy = gs.research.active.is_some();
+    let research_rows: Vec<(
+        sim::research::TechId,
+        String,
+        String,
+        f64,
+        u32,
+        &'static str,
+        bool,
+    )> = techs
+        .read()
+        .iter()
+        .map(|t| {
+            let done = gs.research.completed.contains(&t.id);
+            let prereqs_met = t.requires.iter().all(|r| gs.research.completed.contains(r));
+            let st: &'static str = if done {
+                "done"
+            } else if prereqs_met && !research_busy {
+                "available"
+            } else {
+                "locked"
+            };
+            let affordable = data_amt >= t.data_cost;
+            (
+                t.id,
+                t.name.clone(),
+                t.blurb.clone(),
+                t.data_cost,
+                t.research_ticks,
+                st,
+                affordable,
+            )
+        })
+        .collect();
     drop(snapshot);
 
     let mut act = move |action: Action| {
@@ -525,6 +649,22 @@ fn Console(
                                 let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                                 if let Some(gs) = state.write().as_mut() {
                                     let _ = gs.apply(&world, Action::Build(id));
+                                }
+                            },
+                        }
+                    }
+                    if research_unlocked {
+                        ResearchPanel {
+                            active: research_active.clone(),
+                            rows: research_rows.clone(),
+                            on_start: move |id| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() {
+                                    let _ = gs.apply(&world, Action::StartResearch(id));
                                 }
                             },
                         }
