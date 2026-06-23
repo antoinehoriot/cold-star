@@ -1,6 +1,7 @@
 //! Cold Star simulation core. Pure, deterministic, platform-agnostic.
 #![forbid(unsafe_code)]
 
+pub mod codex;
 pub mod config;
 pub mod crew;
 pub mod economy;
@@ -20,6 +21,7 @@ pub mod state;
 pub mod telemetry;
 pub mod time;
 
+pub use codex::{Codex, Discovery, DiscoveryId, NoteId};
 pub use config::Tuning;
 pub use crew::Crew;
 pub use economy::{EconomyReport, job_ready, run_economy};
