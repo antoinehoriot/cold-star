@@ -64,6 +64,13 @@ impl Reactor {
         self.update_status(tuning);
     }
 
+    /// Subtract `amount` from charge (floored at 0) and recompute status. Used for
+    /// the Thermal-failure extra drain (the cold creeping back in).
+    pub fn drain(&mut self, amount: f64, tuning: &Tuning) {
+        self.charge = (self.charge - amount).max(0.0);
+        self.update_status_power(false, tuning);
+    }
+
     /// Set charge from the power resolution and recompute status. `overdrawn`
     /// is true when total Draw exceeded generation this tick (charge falling
     /// from overdraw rather than under-fuelling).
@@ -197,5 +204,15 @@ mod tests {
     fn new_reactor_has_base_max_output() {
         let r = Reactor::new(&t());
         assert_eq!(r.max_output, t().reactor_base_max_output);
+    }
+
+    #[test]
+    fn drain_lowers_charge_and_can_cold() {
+        let tn = t();
+        let mut r = Reactor::new(&tn);
+        r.drain(40.0, &tn);
+        assert_eq!(r.charge, 60.0);
+        r.drain(60.0, &tn);
+        assert_eq!(r.status, ReactorStatus::Cold);
     }
 }

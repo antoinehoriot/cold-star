@@ -28,12 +28,14 @@ pub fn job_ready(job: &Job, crew: u32, res: &Resources) -> bool {
 }
 
 /// Execute all assigned jobs for one tick. `paused` jobs (powered-off) and
-/// input-starved jobs produce nothing. Outputs are scaled by `efficiency`.
+/// input-starved jobs produce nothing. Outputs are scaled by `efficiency` and
+/// an optional per-job multiplier from `output_mult` (e.g. `JobOutputMult` grants).
 pub fn run_economy(
     assignments: &BTreeMap<JobId, u32>,
     jobs: &JobRegistry,
     paused: &BTreeSet<Consumer>,
     efficiency: f64,
+    output_mult: &BTreeMap<JobId, f64>,
     res: &mut Resources,
 ) -> EconomyReport {
     let mut report = EconomyReport::default();
@@ -59,8 +61,9 @@ pub fn run_economy(
     // Phase B — produce.
     for (id, crew) in to_produce {
         let job = jobs.get(id).expect("job existed in phase A");
+        let m = output_mult.get(&id).copied().unwrap_or(1.0);
         for &(k, amt) in &job.recipe.outputs {
-            let overflow = res.add(k, amt * crew as f64 * efficiency);
+            let overflow = res.add(k, amt * crew as f64 * efficiency * m);
             if overflow > 0.0 {
                 report.overflow = true;
             }
@@ -115,6 +118,7 @@ mod tests {
             &registry(),
             &BTreeSet::new(),
             1.0,
+            &BTreeMap::new(),
             &mut res,
         );
         assert_eq!(res.amount(ResourceKind::Scrap), 3.0);
@@ -130,6 +134,7 @@ mod tests {
             &registry(),
             &BTreeSet::new(),
             1.0,
+            &BTreeMap::new(),
             &mut res,
         );
         assert_eq!(res.amount(ResourceKind::Scrap), 6.0); // 2 crew × 2 scrap
@@ -145,6 +150,7 @@ mod tests {
             &registry(),
             &BTreeSet::new(),
             1.0,
+            &BTreeMap::new(),
             &mut res,
         );
         assert_eq!(res.amount(ResourceKind::Fuel), 0.0);
@@ -163,6 +169,7 @@ mod tests {
             &registry(),
             &paused,
             1.0,
+            &BTreeMap::new(),
             &mut res,
         );
         assert_eq!(res.amount(ResourceKind::Fuel), 0.0);
@@ -180,6 +187,7 @@ mod tests {
             &registry(),
             &BTreeSet::new(),
             1.0,
+            &BTreeMap::new(),
             &mut res,
         );
         assert_eq!(res.amount(ResourceKind::Scrap), 5.0); // salvager output only
@@ -195,9 +203,26 @@ mod tests {
             &registry(),
             &BTreeSet::new(),
             0.5,
+            &BTreeMap::new(),
             &mut res,
         );
         assert_eq!(res.amount(ResourceKind::Scrap), 2.0); // 4 × 1 × 0.5
         assert!(!r.overflow);
+    }
+
+    #[test]
+    fn output_mult_scales_per_job() {
+        let mut res = Resources::default();
+        let mut mult = BTreeMap::new();
+        mult.insert(JobId::Salvager, 2.0);
+        run_economy(
+            &assigns(&[(JobId::Salvager, 1)]),
+            &registry(),
+            &BTreeSet::new(),
+            1.0,
+            &mult,
+            &mut res,
+        );
+        assert_eq!(res.amount(ResourceKind::Scrap), 2.0); // 1 crew x 1 x eff 1.0 x mult 2.0
     }
 }

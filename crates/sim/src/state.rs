@@ -237,6 +237,7 @@ impl GameState {
                 world.jobs,
                 &outcome.paused,
                 efficiency,
+                &std::collections::BTreeMap::new(), // TODO Task 6: replace with &self.research_output_mult
                 &mut self.resources,
             );
 
