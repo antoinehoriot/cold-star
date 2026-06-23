@@ -5,6 +5,7 @@
 use crate::config::Tuning;
 use crate::rng::{Rng, hash};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SystemId(pub u32);
@@ -91,6 +92,67 @@ pub fn jump_cost(dist: f64, t: &Tuning) -> f64 {
     t.jump_base_cost + dist * t.jump_drive_factor
 }
 
+const SITE_SALT: u32 = 0x5176; // mixes sys_id into an independent site stream
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SiteKind {
+    AsteroidField,
+    Derelict,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Site {
+    pub kind: SiteKind,
+    pub depleted: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GalaxyState {
+    pub revealed: BTreeSet<u32>,
+    pub scanned: BTreeSet<u32>,
+    pub sites: BTreeMap<u32, Vec<Site>>,
+}
+
+/// Generate a system's sites once (deterministic). 0–2 sites, weighted by star
+/// type: neutron skews asteroid (Isotopes), dead skews derelict, dwarf/main
+/// may surface nothing (the honest dark).
+pub fn materialize_sites(world_seed: u64, sys_id: u32, star: StarType, _t: &Tuning) -> Vec<Site> {
+    let mut rng = Rng::new(hash(world_seed, sys_id ^ SITE_SALT));
+    // Per star type: (p_asteroid, p_derelict) chance for each of two site rolls.
+    let (p_ast, p_der) = match star {
+        StarType::Neutron => (0.8, 0.2),
+        StarType::Dead => (0.15, 0.8),
+        StarType::MainSequence => (0.4, 0.3),
+        StarType::Dwarf => (0.3, 0.25),
+    };
+    let mut sites = Vec::new();
+    for _ in 0..2 {
+        let roll = rng.next_f64();
+        if roll < p_ast {
+            sites.push(Site {
+                kind: SiteKind::AsteroidField,
+                depleted: false,
+            });
+        } else if roll < p_ast + p_der {
+            sites.push(Site {
+                kind: SiteKind::Derelict,
+                depleted: false,
+            });
+        }
+    }
+    sites
+}
+
+/// Add every system within `radius` of `from` to `out` (including `from`).
+pub fn reveal_from(g: &Galaxy, from: SystemId, radius: f64, out: &mut BTreeSet<u32>) {
+    let Some(origin) = g.get(from) else { return };
+    for s in &g.systems {
+        if distance(origin, s) <= radius {
+            out.insert(s.id.0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +205,46 @@ mod tests {
         };
         assert!((distance(&a, &b) - 5.0).abs() < 1e-9);
         assert!((jump_cost(5.0, &t) - (t.jump_base_cost + 5.0 * t.jump_drive_factor)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn site_materialization_is_deterministic() {
+        let t = Tuning::default();
+        let a = materialize_sites(42, 3, StarType::Neutron, &t);
+        let b = materialize_sites(42, 3, StarType::Neutron, &t);
+        assert_eq!(a, b);
+        assert!(a.len() <= 2);
+        assert!(a.iter().all(|s| !s.depleted));
+    }
+
+    #[test]
+    fn neutron_biases_asteroid_dead_biases_derelict() {
+        let t = Tuning::default();
+        let neutron_ast = (0..200u32)
+            .flat_map(|id| materialize_sites(1, id, StarType::Neutron, &t))
+            .filter(|s| s.kind == SiteKind::AsteroidField)
+            .count();
+        let dead_ast = (0..200u32)
+            .flat_map(|id| materialize_sites(1, id, StarType::Dead, &t))
+            .filter(|s| s.kind == SiteKind::AsteroidField)
+            .count();
+        // Neutron systems surface far more asteroid fields than dead ones.
+        assert!(
+            neutron_ast > dead_ast,
+            "neutron={neutron_ast} dead={dead_ast}"
+        );
+    }
+
+    #[test]
+    fn reveal_from_includes_near_systems_only() {
+        let t = Tuning::default();
+        let g = Galaxy::generate(5, &t);
+        let mut out = std::collections::BTreeSet::new();
+        reveal_from(&g, HOME, t.galaxy_reveal_radius, &mut out);
+        assert!(out.contains(&0)); // home reveals itself
+        for &id in &out {
+            let d = distance(g.get(HOME).unwrap(), g.get(SystemId(id)).unwrap());
+            assert!(d <= t.galaxy_reveal_radius + 1e-9);
+        }
     }
 }
