@@ -733,6 +733,17 @@ mod tests {
                 requires_modules: vec![],
                 unlocks: ModuleUnlocks::default(),
             },
+            Module {
+                id: ModuleId::Thermal,
+                name: "Thermal".into(),
+                description: "test".into(),
+                tier: 1,
+                cost: vec![(ResourceKind::Scrap, 10.0)],
+                cost_scaling: 1.0,
+                repeatable: false,
+                requires_modules: vec![],
+                unlocks: ModuleUnlocks::default(),
+            },
         ])
     }
     fn techs() -> crate::research::TechRegistry {
@@ -1296,6 +1307,60 @@ mod tests {
             s.crew.total,
             crew_before - 1,
             "exactly one crew lost at crew_loss_interval ticks after grace expired"
+        );
+    }
+
+    #[test]
+    fn atmosphere_failure_drains_clock_then_kills_crew() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        // Build Atmosphere, give crew, then force a Cold reactor (no ignite) so
+        // atmosphere is failing every tick.
+        let mut s = GameState::new(&w, 1);
+        s.resources.add(ResourceKind::Scrap, 100.0);
+        s.apply(&w, Action::Build(ModuleId::Atmosphere)).unwrap();
+        s.crew.total = 2;
+        // Drain the core to Cold: with no fuel the baseline load empties it.
+        s.advance(&w, 200);
+        assert_eq!(s.reactor.status, ReactorStatus::Cold);
+        // After grace + at least one loss interval, crew should have died.
+        assert!(
+            s.crew.total < 2,
+            "atmosphere failure should kill crew when Cold"
+        );
+        assert!(s.codex.has(crate::codex::DiscoveryId::Note(
+            crate::codex::NoteId::FirstCrewDeath
+        )));
+    }
+
+    #[test]
+    fn atmosphere_clock_resets_when_powered() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1); // default origin: established, powered
+        s.resources.add(ResourceKind::Scrap, 100.0);
+        s.apply(&w, Action::Build(ModuleId::Atmosphere)).unwrap();
+        s.crew.total = 2;
+        s.advance(&w, 5); // powered (charge high, fuel? baseline only) -> grace stays max
+        assert_eq!(s.atmosphere_grace, t.atmosphere_grace_max);
+        assert_eq!(s.crew.total, 2);
+    }
+
+    #[test]
+    fn thermal_failure_accelerates_drain() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        // Two identical games; one builds Thermal (which has no fuel to stay
+        // powered, so it fails and drains faster).
+        let mut with = GameState::new(&w, 1);
+        let mut without = GameState::new(&w, 1);
+        with.resources.add(ResourceKind::Scrap, 100.0);
+        with.apply(&w, Action::Build(ModuleId::Thermal)).unwrap();
+        with.advance(&w, 5);
+        without.advance(&w, 5);
+        assert!(
+            with.reactor.charge < without.reactor.charge,
+            "thermal failure should drain charge faster"
         );
     }
 }
