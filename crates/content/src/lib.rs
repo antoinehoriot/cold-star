@@ -170,7 +170,8 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
         ModuleId::Lab,
         ModuleId::Quarters,
         ModuleId::StorageHold,
-        ModuleId::LifeSupport,
+        ModuleId::Atmosphere,
+        ModuleId::Thermal,
         ModuleId::ReactorUpgrade,
         ModuleId::Capacitor,
     ] {
@@ -258,7 +259,7 @@ mod tests {
         assert_eq!(salv.power_draw, 0.0);
 
         let mods = load_modules().unwrap();
-        assert_eq!(mods.0.len(), 10);
+        assert_eq!(mods.0.len(), 11);
         // Every module has a non-empty narrative description (the build tooltip).
         for m in mods.iter() {
             assert!(

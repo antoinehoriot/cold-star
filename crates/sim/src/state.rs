@@ -125,17 +125,21 @@ impl GameState {
         h
     }
 
-    /// Per-crew passive life-support draw (0 until Life Support is built).
-    fn life_support_draw(&self, world: &World) -> f64 {
-        if !self.has_module(ModuleId::LifeSupport) {
+    /// Atmosphere power draw (per crew); 0 until the Atmosphere module is built.
+    fn atmosphere_draw(&self, world: &World) -> f64 {
+        if !self.has_module(ModuleId::Atmosphere) {
             return 0.0;
         }
-        let per = world
-            .modules
-            .get(ModuleId::LifeSupport)
-            .map(|m| m.unlocks.passive_draw_per_crew)
-            .unwrap_or(0.0);
-        per * self.crew.total as f64
+        world.tuning.atmosphere_draw_per_crew * self.crew.total as f64
+    }
+
+    /// Thermal power draw (flat); 0 until the Thermal module is built.
+    fn thermal_draw(&self, world: &World) -> f64 {
+        if self.has_module(ModuleId::Thermal) {
+            world.tuning.thermal_draw
+        } else {
+            0.0
+        }
     }
 
     /// Build the priority-ordered consumer list for power resolution, using
@@ -144,8 +148,14 @@ impl GameState {
         let mut list: Vec<PowerConsumer> = Vec::new();
         for &c in &self.priority.0 {
             match c {
-                Consumer::LifeSupport => {
-                    let draw = self.life_support_draw(world);
+                Consumer::Atmosphere => {
+                    let draw = self.atmosphere_draw(world);
+                    if draw > 0.0 {
+                        list.push(PowerConsumer { consumer: c, draw });
+                    }
+                }
+                Consumer::Thermal => {
+                    let draw = self.thermal_draw(world);
                     if draw > 0.0 {
                         list.push(PowerConsumer { consumer: c, draw });
                     }
@@ -175,10 +185,10 @@ impl GameState {
     /// Ensure the priority list contains every assignable consumer, in default
     /// order, appending any new ones (e.g. after a build).
     fn sync_priority(&mut self, world: &World) {
-        // Default order: LifeSupport first, then jobs by ascending default_priority.
+        // Default order: Atmosphere + Thermal first, then jobs by ascending default_priority.
         let mut jobs: Vec<_> = world.jobs.iter().collect();
         jobs.sort_by_key(|j| j.default_priority);
-        let mut defaults = vec![Consumer::LifeSupport];
+        let mut defaults = vec![Consumer::Atmosphere, Consumer::Thermal];
         defaults.extend(jobs.iter().map(|j| Consumer::Job(j.id)));
         self.priority.ensure_contains(&defaults);
     }

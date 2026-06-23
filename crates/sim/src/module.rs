@@ -13,7 +13,8 @@ pub enum ModuleId {
     Lab,
     Quarters,
     StorageHold,
-    LifeSupport,
+    Atmosphere,
+    Thermal,
     ReactorUpgrade,
     Capacitor,
 }

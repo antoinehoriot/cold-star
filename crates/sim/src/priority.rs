@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Consumer {
-    LifeSupport,
+    Atmosphere,
+    Thermal,
     Job(JobId),
 }
 
@@ -53,12 +54,12 @@ mod tests {
     #[test]
     fn ensure_contains_appends_missing_only() {
         let mut p = Priority::default();
-        p.ensure_contains(&[Consumer::LifeSupport, Consumer::Job(JobId::Refiner)]);
-        p.ensure_contains(&[Consumer::LifeSupport, Consumer::Job(JobId::Fabricator)]);
+        p.ensure_contains(&[Consumer::Atmosphere, Consumer::Job(JobId::Refiner)]);
+        p.ensure_contains(&[Consumer::Atmosphere, Consumer::Job(JobId::Fabricator)]);
         assert_eq!(
             p.0,
             vec![
-                Consumer::LifeSupport,
+                Consumer::Atmosphere,
                 Consumer::Job(JobId::Refiner),
                 Consumer::Job(JobId::Fabricator),
             ]
@@ -68,7 +69,7 @@ mod tests {
     #[test]
     fn move_up_and_down_swap_neighbors() {
         let mut p = Priority(vec![
-            Consumer::LifeSupport,
+            Consumer::Atmosphere,
             Consumer::Job(JobId::Refiner),
             Consumer::Job(JobId::Fabricator),
         ]);
@@ -77,7 +78,7 @@ mod tests {
         p.move_down(Consumer::Job(JobId::Fabricator));
         assert_eq!(p.rank(Consumer::Job(JobId::Fabricator)), Some(2));
         // Edges are no-ops.
-        p.move_up(Consumer::LifeSupport);
-        assert_eq!(p.rank(Consumer::LifeSupport), Some(0));
+        p.move_up(Consumer::Atmosphere);
+        assert_eq!(p.rank(Consumer::Atmosphere), Some(0));
     }
 }
