@@ -56,6 +56,7 @@ pub enum Action {
     Jump(crate::galaxy::SystemId),
     ScanSystem(crate::galaxy::SystemId),
     ResolveSite(crate::galaxy::SystemId, usize),
+    Scavenge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +165,32 @@ impl GameState {
                 self.expedition.activity,
                 Some(crate::expedition::Activity::Transit { .. })
             )
+    }
+
+    /// Stranded = away and cannot afford the cheapest jump to any revealed,
+    /// in-range system (so the player could otherwise be stuck). Drives the
+    /// soft-recovery Scavenge action.
+    fn is_stranded(&self, world: &World) -> bool {
+        if !self.away() {
+            return false;
+        }
+        let galaxy = self.galaxy(world);
+        let Some(here) = galaxy.get(self.expedition.location) else {
+            return true;
+        };
+        let cheapest = self
+            .galaxy_state
+            .revealed
+            .iter()
+            .map(|&id| crate::galaxy::SystemId(id))
+            .filter(|&id| id != self.expedition.location)
+            .filter_map(|id| galaxy.get(id))
+            .map(|s| distance(here, s))
+            .filter(|&d| d <= self.ship.drive_range)
+            .map(|d| jump_cost(d, world.tuning))
+            .fold(f64::INFINITY, f64::min);
+        // No reachable system, or can't afford the cheapest one.
+        cheapest.is_infinite() || self.resources.amount(ResourceKind::Fuel) < cheapest
     }
 
     pub fn built_count(&self, id: ModuleId) -> u32 {
@@ -690,6 +717,18 @@ impl GameState {
                 self.expedition.activity = Some(Activity::Transit { to: target, ticks });
                 Ok(())
             }
+            Action::Scavenge => {
+                if self.expedition.activity.is_some() {
+                    return Err(Rejected("the ship is already busy"));
+                }
+                if !self.is_stranded(world) {
+                    return Err(Rejected("no need to scavenge"));
+                }
+                self.expedition.activity = Some(Activity::Scavenge {
+                    ticks: tuning.scavenge_ticks,
+                });
+                Ok(())
+            }
         }
     }
 
@@ -825,9 +864,13 @@ impl GameState {
                     );
                 }
             }
-            // Scavenge arm added in Task 13.
-            other => {
-                self.expedition.activity = Some(other);
+            Activity::Scavenge { .. } => {
+                self.resources.add(ResourceKind::Fuel, tuning.scavenge_fuel);
+                self.log.push(
+                    self.tick,
+                    "You bleed fuel from cold tanks and wreckage. Enough to limp on.",
+                    tuning.log_capacity,
+                );
             }
         }
     }
@@ -1958,5 +2001,42 @@ mod tests {
         );
         // Jumping home is allowed while away.
         assert!(s.apply(&w, Action::Jump(crate::galaxy::HOME)).is_ok());
+    }
+
+    #[test]
+    fn scavenge_only_when_stranded_and_refuels_home() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 4);
+        s.resources.add(ResourceKind::Fuel, 200.0);
+        let target = a_reachable_target(&s, &w);
+        s.apply(&w, Action::Jump(target)).unwrap();
+        s.advance(&w, 64); // arrive
+        // Drain fuel to strand the ship.
+        s.resources
+            .try_spend(ResourceKind::Fuel, s.resources.amount(ResourceKind::Fuel));
+        // At home, scavenge is not offered (you're not stranded there). Test the
+        // away+stranded path: scavenge is accepted and yields fuel.
+        let fuel_before = s.resources.amount(ResourceKind::Fuel);
+        s.apply(&w, Action::Scavenge).unwrap();
+        s.advance(&w, t.scavenge_ticks as u64);
+        assert!(
+            (s.resources.amount(ResourceKind::Fuel) - fuel_before - t.scavenge_fuel).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn scavenge_refused_when_not_stranded() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 4);
+        s.resources.add(ResourceKind::Fuel, 200.0);
+        let target = a_reachable_target(&s, &w);
+        s.apply(&w, Action::Jump(target)).unwrap();
+        s.advance(&w, 64); // arrive, still fuel-rich
+        assert_eq!(
+            s.apply(&w, Action::Scavenge),
+            Err(Rejected("no need to scavenge"))
+        );
     }
 }
