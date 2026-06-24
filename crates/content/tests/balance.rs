@@ -4,6 +4,7 @@
 //! test (spec §9).
 
 use sim::job::JobId;
+use sim::landing::{SurfaceSite, surface_seed};
 use sim::module::ModuleId;
 use sim::reactor::ReactorStatus;
 use sim::research::TechId;
@@ -308,5 +309,72 @@ fn m4_travel_loop_brings_isotopes_home() {
     assert!(
         s.resources.amount(ResourceKind::Isotopes) > iso_home_before,
         "an asteroid run should deposit Isotopes at the station"
+    );
+}
+
+#[test]
+fn m5_landing_is_survivable_and_profitable() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+    // Seed 6 is pinned: generates a Verdant surface where the greedy descend
+    // banks enough Rations to out-earn an asteroid quick-resolve before Suit runs low.
+    let mut s = GameState::new(&w, 6);
+    s.ship.built = true;
+    s.ship.cargo = 500.0;
+    // Place the player at system 1 with a known Verdant planet.
+    s.expedition.location = sim::galaxy::SystemId(1);
+    let v = s.galaxy_state.sites.entry(1).or_default();
+    v.push(sim::galaxy::Site::new(sim::galaxy::SiteKind::Planet(
+        sim::galaxy::Biome::Verdant,
+    )));
+    let idx = v.len() - 1;
+
+    s.apply(&w, Action::Land(idx)).unwrap();
+    // Greedily descend: at each settled step, move to the first edge of the current node,
+    // auto-pick Leave on any Life choice, and bail to Extract before the Suit is gone.
+    let mut guard = 0;
+    loop {
+        guard += 1;
+        assert!(guard < 200, "landing should terminate");
+        let Some(l) = s.expedition.landing.clone() else {
+            break;
+        };
+        if l.pending_choice {
+            s.apply(&w, Action::LeaveLife).ok();
+            continue;
+        }
+        if l.traverse > 0 {
+            s.advance(&w, 1);
+            continue;
+        }
+        // Extract once Suit is getting low, else push deeper.
+        let low_suit = l.suit < t.suit_max * 0.45;
+        let site = SurfaceSite::generate(
+            surface_seed(s.world_seed, l.system, l.site_idx),
+            l.biome,
+            &t,
+        );
+        let next = site.get(l.node).and_then(|n| n.edges.first().copied());
+        match next {
+            Some(target) if !low_suit => {
+                s.apply(&w, Action::MoveToNode(target)).ok();
+                s.advance(&w, 1);
+            }
+            _ => {
+                s.apply(&w, Action::Extract).unwrap();
+                break;
+            }
+        }
+    }
+    // Banked a haul into ship cargo, and survived (not force-retreated empty if we extracted).
+    let banked: f64 = s.expedition.cargo.values().copied().sum();
+    assert!(
+        banked > t.site_asteroid_isotopes,
+        "a landing should out-earn an asteroid quick-resolve"
     );
 }
