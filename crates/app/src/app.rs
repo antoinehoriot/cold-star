@@ -705,7 +705,7 @@ fn SurfaceView(
                 }
                 } // end surfmap-scroll div
                 if cur_edges.is_empty() {
-                    div { class: "muted", "Nowhere deeper. Extract." }
+                    div { class: "muted", "No reachable nodes. Extract." }
                 }
             }
             button { class: "act ghost", onclick: move |_| on_extract.call(()), "Extract to orbit" }
