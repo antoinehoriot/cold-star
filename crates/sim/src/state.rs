@@ -68,6 +68,7 @@ pub enum Action {
     UpgradeWeapon,
     UpgradeArmor,
     CraftConsumable(ConsumableKind),
+    SetAwayCrew { delta: i32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,6 +311,13 @@ impl GameState {
         let mut defaults = vec![Consumer::Atmosphere, Consumer::Thermal];
         defaults.extend(jobs.iter().map(|j| Consumer::Job(j.id)));
         self.priority.ensure_contains(&defaults);
+    }
+
+    /// Maximum HP for the current away-team squad (crew × marine_hp × armor mult).
+    fn squad_hp_max(&self, tuning: &Tuning) -> f64 {
+        self.expedition.away_team.crew as f64
+            * tuning.marine_hp
+            * (1.0 + self.gear.armor_tier as f64 * tuning.armor_hp_step)
     }
 
     pub fn advance(&mut self, world: &World, ticks: u64) {
@@ -966,6 +974,32 @@ impl GameState {
                     return Err(Rejected("not enough materials"));
                 }
                 *self.consumables.entry(kind).or_insert(0) += 1;
+                Ok(())
+            }
+            Action::SetAwayCrew { delta } => {
+                if self.away() || self.landed() {
+                    return Err(Rejected("can only change the away-team while docked"));
+                }
+                if delta > 0 {
+                    let added = self.crew.commit_away(delta as u32);
+                    if added == 0 {
+                        return Err(Rejected("no idle crew to commit"));
+                    }
+                    self.expedition.away_team.crew += added;
+                    // Initialize morale on first commit.
+                    if self.expedition.away_team.morale == 0.0 {
+                        self.expedition.away_team.morale = tuning.morale_max;
+                    }
+                    self.expedition.away_team.hp = self.squad_hp_max(tuning);
+                } else if delta < 0 {
+                    let removed = ((-delta) as u32).min(self.expedition.away_team.crew);
+                    if removed == 0 {
+                        return Err(Rejected("no away crew to release"));
+                    }
+                    self.crew.release_away(removed);
+                    self.expedition.away_team.crew -= removed;
+                    self.expedition.away_team.hp = self.squad_hp_max(tuning);
+                }
                 Ok(())
             }
         }
@@ -2724,5 +2758,21 @@ mod tests {
                 .unwrap_or(0),
             1
         );
+    }
+
+    #[test]
+    fn set_away_crew_commits_idle_and_excludes_from_economy() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.crew.total = 4;
+        assert_eq!(s.crew.idle(), 4);
+        assert!(s.apply(&w, Action::SetAwayCrew { delta: 2 }).is_ok());
+        assert_eq!(s.expedition.away_team.crew, 2);
+        assert_eq!(s.crew.away, 2);
+        assert_eq!(s.crew.idle(), 2); // away excluded from idle
+        assert!(s.apply(&w, Action::SetAwayCrew { delta: -1 }).is_ok());
+        assert_eq!(s.expedition.away_team.crew, 1);
+        assert_eq!(s.crew.idle(), 3);
     }
 }

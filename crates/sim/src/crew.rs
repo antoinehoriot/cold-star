@@ -11,6 +11,7 @@ pub struct Crew {
     pub total: u32,
     pub ticks_until_next: u32,
     pub assignments: BTreeMap<JobId, u32>,
+    pub away: u32,
 }
 
 impl Crew {
@@ -40,9 +41,36 @@ impl Crew {
         self.assignments.get(&job).copied().unwrap_or(0)
     }
 
+    /// Station crew available for jobs/upkeep (excludes the away-team).
+    pub fn at_station(&self) -> u32 {
+        self.total.saturating_sub(self.away)
+    }
+
     pub fn idle(&self) -> u32 {
         let assigned: u32 = self.assignments.values().sum();
-        self.total.saturating_sub(assigned)
+        self.total.saturating_sub(assigned + self.away)
+    }
+
+    /// Commit up to `n` idle crew to the away-team; returns how many committed.
+    pub fn commit_away(&mut self, n: u32) -> u32 {
+        let take = n.min(self.idle());
+        self.away += take;
+        take
+    }
+
+    /// Release `n` away crew back to the station idle pool.
+    pub fn release_away(&mut self, n: u32) {
+        self.away = self.away.saturating_sub(n);
+    }
+
+    /// Kill one away crew (combat/starvation): shrinks both away and total.
+    pub fn kill_away(&mut self) -> bool {
+        if self.away == 0 || self.total == 0 {
+            return false;
+        }
+        self.away -= 1;
+        self.total -= 1;
+        true
     }
 
     /// Assign (`delta > 0`) or unassign (`delta < 0`) crew to `job`. Bounded by
@@ -72,9 +100,9 @@ impl Crew {
     }
 
     /// Remove one crew member. Idle crew go first; otherwise the lowest-JobId
-    /// assigned job loses one. Returns false if there is no crew at all.
+    /// assigned job loses one. Returns false if there is no station crew at all.
     pub fn lose_one(&mut self) -> bool {
-        if self.total == 0 {
+        if self.at_station() == 0 {
             return false;
         }
         if self.idle() == 0 {
@@ -96,9 +124,10 @@ impl Crew {
         }
     }
 
-    /// Total Rations consumed by upkeep this tick.
+    /// Total Rations consumed by station crew upkeep this tick.
+    /// Away crew eat ship Rations billed separately (Task 5).
     pub fn ration_upkeep(&self, tuning: &Tuning) -> f64 {
-        self.total as f64 * tuning.crew_ration_upkeep
+        self.at_station() as f64 * tuning.crew_ration_upkeep
     }
 }
 
@@ -162,12 +191,14 @@ mod tests {
     }
 
     #[test]
-    fn ration_upkeep_scales_with_total() {
+    fn ration_upkeep_scales_with_station_crew() {
         let tn = t();
         let c = Crew {
             total: 5,
+            away: 2,
             ..Crew::default()
         };
-        assert_eq!(c.ration_upkeep(&tn), 5.0 * tn.crew_ration_upkeep);
+        // Only the 3 at-station crew consume station Rations; away crew eat ship Rations.
+        assert_eq!(c.ration_upkeep(&tn), 3.0 * tn.crew_ration_upkeep);
     }
 }

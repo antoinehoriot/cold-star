@@ -27,12 +27,20 @@ pub enum Activity {
     },
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AwayTeam {
+    pub crew: u32,
+    pub hp: f64,
+    pub morale: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Expedition {
     pub location: SystemId,
     pub activity: Option<Activity>,
     pub cargo: BTreeMap<ResourceKind, f64>,
     pub landing: Option<Landing>,
+    pub away_team: AwayTeam,
 }
 
 impl Default for Expedition {
@@ -42,6 +50,7 @@ impl Default for Expedition {
             activity: None,
             cargo: BTreeMap::new(),
             landing: None,
+            away_team: AwayTeam::default(),
         }
     }
 }
