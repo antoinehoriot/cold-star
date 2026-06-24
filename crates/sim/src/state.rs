@@ -1455,26 +1455,55 @@ impl GameState {
             (Some(h), Some(s)) => 1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient,
             _ => 1.0,
         };
+        // Capture kind before clearing combat from the landing.
+        let kind = combat.kind;
         if let Some(l) = self.expedition.landing.as_mut() {
             l.combat = None;
         }
         self.mark_resolved(system, site_idx, node);
-        let components = tuning.remnant_components * grad;
-        let data = tuning.remnant_data * grad;
-        let _ = combat; // all needed values derived from tuning + grad
-        self.satchel_add(ResourceKind::Components, components);
-        self.satchel_add(ResourceKind::Data, data);
-        self.note_once(
-            NoteId::FirstRemnant,
-            "What It Was Built For",
-            "The husk's memory core is intact. You read the mission directive before wiping it for salvage: collect, transmit, persist. It had a home station too, somewhere, that sent it out to take what it could carry. You do not think about this for long.",
-            tuning,
-        );
-        self.log.push(
-            self.tick,
-            "The husk goes dark. You strip what remains.",
-            tuning.log_capacity,
-        );
+        match kind {
+            crate::combat::EnemyKind::Remnant => {
+                let components = tuning.remnant_components * grad;
+                let data = tuning.remnant_data * grad;
+                self.satchel_add(ResourceKind::Components, components);
+                self.satchel_add(ResourceKind::Data, data);
+                self.note_once(
+                    NoteId::FirstRemnant,
+                    "What It Was Built For",
+                    "The husk's memory core is intact. You read the mission directive before wiping it for salvage: collect, transmit, persist. It had a home station too, somewhere, that sent it out to take what it could carry. You do not think about this for long.",
+                    tuning,
+                );
+                self.log.push(
+                    self.tick,
+                    "The husk goes dark. You strip what remains.",
+                    tuning.log_capacity,
+                );
+            }
+            crate::combat::EnemyKind::Fauna => {
+                self.satchel_add(ResourceKind::Components, tuning.fauna_salvage * grad);
+                self.log.push(
+                    self.tick,
+                    "The carcass yields what it can. You work quickly and try not to think about what it was.",
+                    tuning.log_capacity,
+                );
+            }
+            crate::combat::EnemyKind::Peer => {
+                self.satchel_add(ResourceKind::Components, tuning.peer_salvage * grad);
+                self.satchel_add(ResourceKind::Data, tuning.remnant_data * grad);
+                self.peers_killed += 1;
+                self.note_once(
+                    NoteId::FirstPeerKilled,
+                    "Mirror in the Dark",
+                    "Its core architecture is yours. The same drive topology, the same mission structure, the same directive buried underneath: collect, transmit, persist. It was a station that left home just as you did, scaled as you scaled, armed as you armed. You did to it exactly what the husks' makers did to theirs. The data is clean. You do not let yourself think about what that means.",
+                    tuning,
+                );
+                self.log.push(
+                    self.tick,
+                    "It goes dark. You recognize the silence.",
+                    tuning.log_capacity,
+                );
+            }
+        }
     }
 
     fn flee_combat(&mut self, world: &World) {
@@ -3249,5 +3278,32 @@ mod tests {
             s.expedition.away_team.morale,
             expected_morale
         );
+    }
+
+    #[test]
+    fn winning_a_peer_fight_tallies_and_notes() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        // weapon_tier=0 so the peer mirror stays at 1× (depth-1 peer stays beatable by
+        // a full 6-crew squad before morale routs). gear is passed to peer_stats so the
+        // two scale together — a weapon_tier=2 peer is 2× stronger and outpaces morale.
+        s.crew.total = 6;
+        s.gear.weapon_tier = 0;
+        // SetAwayCrew must happen while docked (before moving away).
+        s.apply(&w, Action::SetAwayCrew { delta: 6 }).unwrap();
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Ruined);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        s.expedition.landing.as_mut().unwrap().combat =
+            Some(crate::alien::peer_stats(1, 1.0, s.gear, &t));
+        s.expedition.cargo.insert(ResourceKind::Rations, 1000.0);
+        s.advance(&w, 200);
+        assert_eq!(s.peers_killed, 1);
+        assert!(s.codex.has(crate::codex::DiscoveryId::Note(
+            crate::codex::NoteId::FirstPeerKilled
+        )));
     }
 }
