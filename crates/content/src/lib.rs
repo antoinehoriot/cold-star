@@ -134,6 +134,7 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
         ("star_weight_mainseq", t.star_weight_mainseq),
         ("star_weight_neutron", t.star_weight_neutron),
         ("star_weight_dead", t.star_weight_dead),
+        ("star_weight_giant", t.star_weight_giant),
         ("ship_base_drive_range", t.ship_base_drive_range),
         ("ship_cargo", t.ship_cargo),
         ("ship_base_hull", t.ship_base_hull),
@@ -427,7 +428,15 @@ pub struct BiomeDef {
 pub fn load_biomes() -> Result<Vec<BiomeDef>, ContentError> {
     let defs: Vec<BiomeDef> =
         ron::from_str(BIOMES_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
-    for want in [Biome::Frozen, Biome::Toxic, Biome::Verdant, Biome::Ruined] {
+    for want in [
+        Biome::Frozen,
+        Biome::Toxic,
+        Biome::Verdant,
+        Biome::Ruined,
+        Biome::Molten,
+        Biome::Dead,
+        Biome::Oceanic,
+    ] {
         let def = defs
             .iter()
             .find(|d| d.biome == want)
@@ -637,14 +646,17 @@ mod tests {
     }
 
     #[test]
-    fn loads_four_biomes_with_blurbs() {
+    fn loads_seven_biomes_with_blurbs() {
         let b = load_biomes().unwrap();
-        assert_eq!(b.len(), 4);
+        assert_eq!(b.len(), 7);
         for want in [
             sim::galaxy::Biome::Frozen,
             sim::galaxy::Biome::Toxic,
             sim::galaxy::Biome::Verdant,
             sim::galaxy::Biome::Ruined,
+            sim::galaxy::Biome::Molten,
+            sim::galaxy::Biome::Dead,
+            sim::galaxy::Biome::Oceanic,
         ] {
             let def = b.iter().find(|d| d.biome == want).expect("biome present");
             assert!(!def.blurb.trim().is_empty());

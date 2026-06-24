@@ -78,6 +78,7 @@ pub struct Tuning {
     pub star_weight_mainseq: f64,
     pub star_weight_neutron: f64,
     pub star_weight_dead: f64,
+    pub star_weight_giant: f64,
     // M4 — ship
     pub ship_base_drive_range: f64,
     pub ship_cargo: f64,
@@ -156,6 +157,7 @@ impl Default for Tuning {
             star_weight_mainseq: 3.0,
             star_weight_neutron: 2.0,
             star_weight_dead: 2.0,
+            star_weight_giant: 1.5,
             ship_base_drive_range: 40.0,
             ship_cargo: 60.0,
             ship_base_hull: 10.0,

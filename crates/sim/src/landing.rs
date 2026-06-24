@@ -157,6 +157,9 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
         Biome::Toxic => (2.5, if deep { 4.5 } else { 3.0 }, 1.5, 0.0, 1.0),
         Biome::Verdant => (3.0, if deep { 2.0 } else { 1.0 }, 1.0, 3.0, 1.0),
         Biome::Ruined => (2.0, if deep { 3.0 } else { 2.0 }, 4.0, 0.0, 1.0),
+        Biome::Molten => (3.0, if deep { 5.5 } else { 4.0 }, 1.0, 0.0, 1.0),
+        Biome::Dead => (1.5, if deep { 2.0 } else { 1.5 }, 4.0, 0.0, 3.0),
+        Biome::Oceanic => (3.0, if deep { 2.5 } else { 1.5 }, 1.0, 3.0, 1.0),
     };
     let table = [
         (EncounterKind::ResourceCache, w.0),
@@ -215,7 +218,15 @@ mod tests {
     fn every_node_reachable_from_entry() {
         use std::collections::{BTreeSet, VecDeque};
         let t = Tuning::default();
-        let all_biomes = [Biome::Frozen, Biome::Toxic, Biome::Verdant, Biome::Ruined];
+        let all_biomes = [
+            Biome::Frozen,
+            Biome::Toxic,
+            Biome::Verdant,
+            Biome::Ruined,
+            Biome::Molten,
+            Biome::Dead,
+            Biome::Oceanic,
+        ];
         for biome in all_biomes {
             for seed in [1u64, 2, 7, 42, 99, 1337] {
                 let site = SurfaceSite::generate(surface_seed(seed, SystemId(1), 0), biome, &t);
@@ -254,6 +265,9 @@ mod tests {
             })
         };
         assert!(life_in(Biome::Verdant), "verdant holds life");
+        assert!(life_in(Biome::Oceanic), "oceanic holds life");
         assert!(!life_in(Biome::Frozen), "frozen has no life");
+        assert!(!life_in(Biome::Molten), "molten has no life");
+        assert!(!life_in(Biome::Dead), "dead has no life");
     }
 }

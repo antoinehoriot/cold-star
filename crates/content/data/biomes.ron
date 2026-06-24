@@ -3,4 +3,7 @@
     ( biome: Toxic,   blurb: "A corrosive sky. The world is trying to dissolve you, patiently." ),
     ( biome: Verdant, blurb: "Green and breathing. Something here is alive, and it was here first." ),
     ( biome: Ruined,  blurb: "Someone built here once. What's left has the shape of your own halls." ),
+    ( biome: Molten,  blurb: "Fire and pressure and the ground heaving underfoot — materials wrenched from a world that is actively trying to kill you." ),
+    ( biome: Dead,    blurb: "It died long ago, whatever it was — quiet now, ruined, picked at by whatever came before you got here." ),
+    ( biome: Oceanic, blurb: "A living ocean, teeming and watchful. You broke the surface and it noticed you arrive." ),
 ]

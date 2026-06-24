@@ -18,6 +18,7 @@ pub enum StarType {
     MainSequence,
     Neutron,
     Dead,
+    Giant,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,6 +71,7 @@ fn weighted_star(rng: &mut Rng, t: &Tuning) -> StarType {
         (StarType::MainSequence, t.star_weight_mainseq),
         (StarType::Neutron, t.star_weight_neutron),
         (StarType::Dead, t.star_weight_dead),
+        (StarType::Giant, t.star_weight_giant),
     ];
     let total: f64 = weights.iter().map(|&(_, w)| w).sum();
     let mut pick = rng.next_f64() * total;
@@ -100,6 +102,9 @@ pub enum Biome {
     Toxic,
     Verdant,
     Ruined,
+    Molten,
+    Dead,
+    Oceanic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +150,7 @@ pub fn materialize_sites(world_seed: u64, sys_id: u32, star: StarType, t: &Tunin
         StarType::Dead => (0.15, 0.8),
         StarType::MainSequence => (0.4, 0.3),
         StarType::Dwarf => (0.3, 0.25),
+        StarType::Giant => (0.5, 0.2),
     };
     let p_planet = t.planet_site_weight; // planets layer on top of the asteroid/derelict bands
     let mut sites = Vec::new();
@@ -158,11 +164,14 @@ pub fn materialize_sites(world_seed: u64, sys_id: u32, star: StarType, t: &Tunin
         // Independent planet roll on a separate draw so adding planets doesn't
         // shift the asteroid/derelict distribution.
         if rng.next_f64() < p_planet {
-            let biome = match (rng.next_f64() * 4.0) as u32 {
+            let biome = match (rng.next_f64() * 7.0) as u32 {
                 0 => Biome::Frozen,
                 1 => Biome::Toxic,
                 2 => Biome::Verdant,
-                _ => Biome::Ruined,
+                3 => Biome::Ruined,
+                4 => Biome::Molten,
+                5 => Biome::Dead,
+                _ => Biome::Oceanic,
             };
             sites.push(Site::new(SiteKind::Planet(biome)));
         }

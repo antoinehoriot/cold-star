@@ -1140,6 +1140,9 @@ impl GameState {
                     Biome::Toxic => ResourceKind::Components,
                     Biome::Verdant => ResourceKind::Rations,
                     Biome::Ruined => ResourceKind::Isotopes,
+                    Biome::Molten => ResourceKind::Isotopes,
+                    Biome::Dead => ResourceKind::Components,
+                    Biome::Oceanic => ResourceKind::Rations,
                 };
                 self.satchel_add(kind_res, amt);
                 self.log
