@@ -19,8 +19,33 @@ struct NavRow {
     affordable: bool,
     scanned: bool,
     cost: f64,
-    // (site_index, kind label, depleted)
-    sites: Vec<(usize, String, bool)>,
+    // (site_index, kind label, depleted, landable)
+    sites: Vec<(usize, String, bool, bool)>,
+}
+
+#[derive(Clone, PartialEq)]
+struct SurfaceNodeVM {
+    id: u32,
+    depth: u32,
+    kind: String,
+    resolved: bool,
+    is_current: bool,
+    edges: Vec<u32>,
+}
+
+#[derive(Clone, PartialEq)]
+struct LandingVM {
+    biome: String,
+    suit: f64,
+    suit_max: f64,
+    satchel: Vec<(String, f64)>,
+    node: u32,
+    depth: u32,
+    encounter: String,
+    pending_choice: bool,
+    traverse: u32,
+    neighbors: Vec<(u32, String, bool)>,
+    nodes: Vec<SurfaceNodeVM>,
 }
 
 const CSS: &str = "
@@ -123,6 +148,10 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .star-Dead { }
 .navmap circle.sys:hover { stroke: #9fd0e6; stroke-width: 1.2; }
 .nav-detail { border-top: 1px solid #16313f; padding-top: .4rem; }
+.surface { border-color: #2f5a40; }
+.bar-suit > span { background: #6fd6a0; }
+.surf-here { font-size: .85rem; color: #c7d3dd; margin: .3rem 0; }
+.surf-choice { border-left: 2px solid #5a4a26; padding-left: .6rem; margin: .4rem 0; }
 ";
 
 #[component]
@@ -393,6 +422,7 @@ fn NavigationPanel(
     on_resolve: EventHandler<(sim::galaxy::SystemId, usize)>,
     on_scavenge: EventHandler<()>,
     on_upgrade: EventHandler<()>,
+    on_land: EventHandler<usize>,
 ) -> Element {
     let mut selected = use_signal(|| current);
     // Center on the current system's position.
@@ -500,11 +530,15 @@ fn NavigationPanel(
                             }
                         }
                     }
-                    for (idx, kind, depleted) in row.sites.clone() {
+                    for (idx, kind, depleted, landable) in row.sites.clone() {
                         div { class: "nav-site",
                             span { "{kind}" if depleted { span { class: "muted", " \u{00b7} stripped" } } }
                             if row.is_current && !depleted {
-                                button { class: "mini", disabled: busy, onclick: move |_| on_resolve.call((row.id, idx)), "work" }
+                                if landable {
+                                    button { class: "mini", disabled: busy, onclick: move |_| on_land.call(idx), "land" }
+                                } else {
+                                    button { class: "mini", disabled: busy, onclick: move |_| on_resolve.call((row.id, idx)), "work" }
+                                }
                             }
                         }
                     }
@@ -516,6 +550,49 @@ fn NavigationPanel(
             if away {
                 div { class: "muted", "Return to the station to deposit cargo and resume control." }
             }
+        }
+    }
+}
+
+#[component]
+fn SurfaceView(
+    vm: LandingVM,
+    on_move: EventHandler<u32>,
+    on_harvest: EventHandler<()>,
+    on_leave: EventHandler<()>,
+    on_extract: EventHandler<()>,
+) -> Element {
+    let suit_pct = (vm.suit / vm.suit_max * 100.0).clamp(0.0, 100.0);
+    let busy = vm.traverse > 0;
+    rsx! {
+        div { class: "panel surface",
+            div { class: "panel-title", "SURFACE \u{00b7} {vm.biome}" }
+            div { class: "muted", "Suit {vm.suit:.0} / {vm.suit_max:.0}" }
+            div { class: "bar bar-suit", span { style: "width: {suit_pct}%" } }
+            div { class: "surf-here", "You are at: {vm.encounter} (depth {vm.depth})" }
+            if busy { div { class: "muted", "Crossing the ground\u{2026} {vm.traverse}s" } }
+            div { class: "panel-title", "SATCHEL" }
+            if vm.satchel.is_empty() { div { class: "muted", "empty" } }
+            for (name, amt) in vm.satchel.clone() {
+                div { class: "res-row", span { "{name}" } span { "{amt:.0}" } }
+            }
+            if vm.pending_choice {
+                div { class: "surf-choice",
+                    div { class: "muted", "Something living. It has not noticed you yet." }
+                    button { class: "act", onclick: move |_| on_harvest.call(()), "Harvest it" }
+                    button { class: "act", onclick: move |_| on_leave.call(()), "Leave it" }
+                }
+            } else {
+                div { class: "panel-title", "DESCEND" }
+                if vm.neighbors.is_empty() { div { class: "muted", "Nowhere deeper. Extract." } }
+                for (id, kind, resolved) in vm.neighbors.clone() {
+                    div { class: "nav-site",
+                        span { "{kind}" if resolved { span { class: "muted", " \u{00b7} stripped" } } }
+                        button { class: "mini", disabled: busy, onclick: move |_| on_move.call(id), "go" }
+                    }
+                }
+            }
+            button { class: "act ghost", onclick: move |_| on_extract.call(()), "Extract to orbit" }
         }
     }
 }
@@ -788,14 +865,17 @@ fn Console(
             let cost = sim::galaxy::jump_cost(dist, &t);
             let affordable = gs.resources.fuel >= cost;
             let scanned = gs.galaxy_state.scanned.contains(&sid);
-            let sites: Vec<(usize, String, bool)> = gs
+            let sites: Vec<(usize, String, bool, bool)> = gs
                 .galaxy_state
                 .sites
                 .get(&sid)
                 .map(|v| {
                     v.iter()
                         .enumerate()
-                        .map(|(i, s)| (i, format!("{:?}", s.kind), s.depleted))
+                        .map(|(i, s)| {
+                            let landable = matches!(s.kind, sim::galaxy::SiteKind::Planet(_));
+                            (i, format!("{:?}", s.kind), s.depleted, landable)
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -882,6 +962,68 @@ fn Console(
             )
         })
         .collect();
+    let landing_vm: Option<LandingVM> = gs.expedition.landing.as_ref().map(|l| {
+        let tn = tuning.read();
+        let surface = sim::landing::SurfaceSite::generate(
+            sim::landing::surface_seed(gs.world_seed, l.system, l.site_idx),
+            l.biome,
+            &tn,
+        );
+        let resolved = gs
+            .galaxy_state
+            .sites
+            .get(&l.system.0)
+            .and_then(|v| v.get(l.site_idx))
+            .map(|s| s.resolved_nodes.clone())
+            .unwrap_or_default();
+        let cur = surface.get(l.node).cloned();
+        let neighbors = cur
+            .as_ref()
+            .map(|n| {
+                n.edges
+                    .iter()
+                    .filter_map(|&e| {
+                        surface
+                            .get(e)
+                            .map(|nn| (e, format!("{:?}", nn.kind), resolved.contains(&e)))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let nodes = surface
+            .nodes
+            .iter()
+            .map(|n| SurfaceNodeVM {
+                id: n.id,
+                depth: n.depth,
+                kind: format!("{:?}", n.kind),
+                resolved: resolved.contains(&n.id),
+                is_current: n.id == l.node,
+                edges: n.edges.clone(),
+            })
+            .collect();
+        LandingVM {
+            biome: format!("{:?}", l.biome),
+            suit: l.suit,
+            suit_max: tn.suit_max,
+            satchel: l
+                .satchel
+                .iter()
+                .map(|(k, v)| (format!("{k:?}"), *v))
+                .collect(),
+            node: l.node,
+            depth: cur.as_ref().map(|n| n.depth).unwrap_or(0),
+            encounter: cur
+                .as_ref()
+                .map(|n| format!("{:?}", n.kind))
+                .unwrap_or_default(),
+            pending_choice: l.pending_choice,
+            traverse: l.traverse,
+            neighbors,
+            nodes,
+        }
+    });
+    let _landed = landing_vm.is_some();
     drop(snapshot);
 
     let mut act = move |action: Action| {
@@ -951,60 +1093,106 @@ fn Console(
         }
         if shipyard_complete {
             div { class: "nav-wrap",
-                NavigationPanel {
-                    drive: ship_drive,
-                    cargo_used: ship_cargo_used,
-                    cargo_max: ship_cargo_max,
-                    fuel,
-                    isotopes,
-                    activity_label: activity_label.clone(),
-                    busy,
-                    away,
-                    has_sensor,
-                    stranded,
-                    can_upgrade_drive,
-                    current: loc,
-                    rows: nav_rows.clone(),
-                    on_scan: move |id| {
-                        let t = tuning.read().clone();
-                        let j = JobRegistry(jobs.read().clone());
-                        let m = ModuleRegistry(modules.read().clone());
-                        let tc = TechRegistry(techs.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                        if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ScanSystem(id)); }
-                    },
-                    on_jump: move |id| {
-                        let t = tuning.read().clone();
-                        let j = JobRegistry(jobs.read().clone());
-                        let m = ModuleRegistry(modules.read().clone());
-                        let tc = TechRegistry(techs.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                        if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Jump(id)); }
-                    },
-                    on_resolve: move |(id, idx)| {
-                        let t = tuning.read().clone();
-                        let j = JobRegistry(jobs.read().clone());
-                        let m = ModuleRegistry(modules.read().clone());
-                        let tc = TechRegistry(techs.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                        if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ResolveSite(id, idx)); }
-                    },
-                    on_scavenge: move |_| {
-                        let t = tuning.read().clone();
-                        let j = JobRegistry(jobs.read().clone());
-                        let m = ModuleRegistry(modules.read().clone());
-                        let tc = TechRegistry(techs.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                        if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Scavenge); }
-                    },
-                    on_upgrade: move |_| {
-                        let t = tuning.read().clone();
-                        let j = JobRegistry(jobs.read().clone());
-                        let m = ModuleRegistry(modules.read().clone());
-                        let tc = TechRegistry(techs.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                        if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeDrive); }
-                    },
+                if let Some(vm) = landing_vm.clone() {
+                    SurfaceView {
+                        vm,
+                        on_move: move |node| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::MoveToNode(node)); }
+                        },
+                        on_harvest: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HarvestLife); }
+                        },
+                        on_leave: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::LeaveLife); }
+                        },
+                        on_extract: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Extract); }
+                        },
+                    }
+                } else {
+                    NavigationPanel {
+                        drive: ship_drive,
+                        cargo_used: ship_cargo_used,
+                        cargo_max: ship_cargo_max,
+                        fuel,
+                        isotopes,
+                        activity_label: activity_label.clone(),
+                        busy,
+                        away,
+                        has_sensor,
+                        stranded,
+                        can_upgrade_drive,
+                        current: loc,
+                        rows: nav_rows.clone(),
+                        on_scan: move |id| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ScanSystem(id)); }
+                        },
+                        on_jump: move |id| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Jump(id)); }
+                        },
+                        on_resolve: move |(id, idx)| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ResolveSite(id, idx)); }
+                        },
+                        on_scavenge: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Scavenge); }
+                        },
+                        on_upgrade: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeDrive); }
+                        },
+                        on_land: move |idx| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Land(idx)); }
+                        },
+                    }
                 }
             }
         }
