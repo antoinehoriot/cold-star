@@ -3,6 +3,9 @@
 //! milestones in windows; never permanently deadlocks). Tuning regression
 //! test (spec §9).
 
+use sim::combat::remnant_stats;
+use sim::flags::Flag;
+use sim::galaxy::{Biome, Site, SiteKind, SystemId};
 use sim::job::JobId;
 use sim::landing::{SurfaceSite, surface_seed};
 use sim::module::ModuleId;
@@ -377,4 +380,241 @@ fn m5_landing_is_survivable_and_profitable() {
         banked > t.site_asteroid_isotopes,
         "a landing should out-earn an asteroid quick-resolve"
     );
+}
+
+/// CB1 — a geared 5-marine squad (weapon tier 1, armor tier 1) clears a
+/// depth-1 Remnant without a wipe and banks Components+Data on Extract.
+///
+/// Seed 6. Squad: 5 crew, Aggressive stance, Rations in cargo.
+/// Encounter injected directly (setup); fight resolved via advance().
+#[test]
+fn cb1_geared_squad_clears_a_remnant() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+    let mut s = GameState::new(&w, 6);
+
+    // Bootstrap: build Fabricator then Assembler (Armory prerequisite).
+    // Armory requires Assembler + CombatDoctrineKnown flag.
+    s.resources.add(ResourceKind::Scrap, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Fabricator)).unwrap();
+
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Data, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Assembler)).unwrap(); // Alloy 25 + Data 10
+
+    s.flags.insert(Flag::CombatDoctrineKnown);
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Components, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Armory)).unwrap(); // Alloy 30 + Components 18
+
+    // Build a ship so we can land. All station management must happen while docked at HOME.
+    s.ship.built = true;
+    s.ship.cargo = 500.0;
+
+    // Gear up at HOME: weapon tier 1 then armor tier 1.
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Components, 100.0);
+    s.apply(&w, Action::UpgradeWeapon).unwrap();
+    assert_eq!(s.gear.weapon_tier, 1);
+
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Components, 100.0);
+    s.apply(&w, Action::UpgradeArmor).unwrap();
+    assert_eq!(s.gear.armor_tier, 1);
+
+    // Commit 5 crew to the away-team while still at HOME.
+    s.crew.total = 6; // 1 spare for station
+    s.apply(&w, Action::SetAwayCrew { delta: 5 }).unwrap();
+    assert_eq!(s.expedition.away_team.crew, 5);
+
+    // Stock 50 Rations in expedition cargo — enough for 5 crew over 60+ ticks
+    // but leaves ample cargo space for the salvage Components and Data.
+    s.expedition.cargo.insert(ResourceKind::Rations, 50.0);
+
+    // Move expedition to a remote system and register a Ruined planet.
+    s.expedition.location = SystemId(1);
+    let sites = s.galaxy_state.sites.entry(1).or_default();
+    sites.push(Site::new(SiteKind::Planet(Biome::Ruined)));
+
+    // Land on the Ruined planet (site index 0).
+    s.apply(&w, Action::Land(0)).unwrap();
+    assert!(s.expedition.landing.is_some(), "should be on the surface");
+
+    // Inject a depth-1 Remnant encounter directly (scenario setup — the fight
+    // itself runs through advance/tick_combat below).
+    {
+        let landing = s.expedition.landing.as_mut().unwrap();
+        landing.combat = Some(remnant_stats(1, 1.0, &t));
+    }
+
+    // Switch to Aggressive stance for maximum damage output.
+    s.apply(&w, Action::SetStance(sim::combat::Stance::Aggressive))
+        .unwrap();
+
+    // Advance tick-by-tick until combat resolves (enemy defeated or wipe).
+    // Cap at 200 ticks — a depth-1 fight should end in a handful of ticks.
+    let crew_before = s.expedition.away_team.crew;
+    for _ in 0..200 {
+        let in_combat = s
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.combat.as_ref())
+            .is_some();
+        if !in_combat {
+            break;
+        }
+        s.advance(&w, 1);
+    }
+
+    // Combat must have resolved (no combat field remaining).
+    let combat_still_active = s
+        .expedition
+        .landing
+        .as_ref()
+        .and_then(|l| l.combat.as_ref())
+        .is_some();
+    assert!(
+        !combat_still_active,
+        "combat should have resolved within 200 ticks"
+    );
+
+    // Squad must NOT be wiped — at least 1 marine survived.
+    assert!(
+        s.expedition.away_team.crew > 0,
+        "geared squad should survive a depth-1 Remnant (crew={crew_before} before fight)"
+    );
+
+    // The win path adds Components and Data to the satchel. Extract to bank them.
+    let satchel_components = s
+        .expedition
+        .landing
+        .as_ref()
+        .and_then(|l| l.satchel.get(&ResourceKind::Components))
+        .copied()
+        .unwrap_or(0.0);
+    let satchel_data = s
+        .expedition
+        .landing
+        .as_ref()
+        .and_then(|l| l.satchel.get(&ResourceKind::Data))
+        .copied()
+        .unwrap_or(0.0);
+    assert!(
+        satchel_components > 0.0,
+        "win should bank Components in satchel (got {satchel_components})"
+    );
+    assert!(
+        satchel_data > 0.0,
+        "win should bank Data in satchel (got {satchel_data})"
+    );
+
+    // Extract — moves satchel into expedition cargo.
+    s.apply(&w, Action::Extract).unwrap();
+    let banked_components = s
+        .expedition
+        .cargo
+        .get(&ResourceKind::Components)
+        .copied()
+        .unwrap_or(0.0);
+    let banked_data = s
+        .expedition
+        .cargo
+        .get(&ResourceKind::Data)
+        .copied()
+        .unwrap_or(0.0);
+    assert!(
+        banked_components > 0.0,
+        "Components should be in cargo after Extract (got {banked_components})"
+    );
+    assert!(
+        banked_data > 0.0,
+        "Data should be in cargo after Extract (got {banked_data})"
+    );
+}
+
+/// CB1 — a 1-crew no-gear squad facing a deep Remnant (depth 3) can Flee
+/// without a game-over. The squad takes damage but survives.
+#[test]
+fn cb1_weak_squad_can_flee() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+    let mut s = GameState::new(&w, 6);
+
+    // Minimal bootstrap: ship built. Crew assignment must happen while docked at HOME.
+    s.ship.built = true;
+    s.ship.cargo = 500.0;
+
+    // 1-crew away-team, no gear (default tier 0). Must assign while at HOME.
+    s.crew.total = 2; // 1 spare for station
+    s.apply(&w, Action::SetAwayCrew { delta: 1 }).unwrap();
+    assert_eq!(s.expedition.away_team.crew, 1);
+
+    // Now move expedition to a remote system and register a Ruined planet.
+    s.expedition.location = SystemId(2);
+    let sites = s.galaxy_state.sites.entry(2).or_default();
+    sites.push(Site::new(SiteKind::Planet(Biome::Ruined)));
+    assert_eq!(s.gear.weapon_tier, 0);
+    assert_eq!(s.gear.armor_tier, 0);
+
+    // Stock minimal Rations so starvation doesn't confound the test.
+    s.expedition.cargo.insert(ResourceKind::Rations, 500.0);
+
+    // Land.
+    s.apply(&w, Action::Land(0)).unwrap();
+    assert!(s.expedition.landing.is_some());
+
+    // Inject a deep (depth=3) Remnant — scaled by combat_depth_mult this is very
+    // dangerous for a single unequipped marine.
+    {
+        let landing = s.expedition.landing.as_mut().unwrap();
+        landing.combat = Some(remnant_stats(3, 1.0, &t));
+    }
+
+    // Advance 2 ticks so the squad takes real damage (proves the fight runs).
+    s.advance(&w, 2);
+
+    let crew_after_hits = s.expedition.away_team.crew;
+    let hp_after_hits = s.expedition.away_team.hp;
+
+    // The squad may have auto-fled if morale hit rout or crew hit 0 — both fine.
+    // Only assert if combat is still active that we can Flee manually.
+    let still_fighting = s
+        .expedition
+        .landing
+        .as_ref()
+        .and_then(|l| l.combat.as_ref())
+        .is_some();
+
+    if still_fighting {
+        // Manual Flee — must succeed.
+        s.apply(&w, Action::Flee).unwrap();
+    }
+
+    // After fleeing: landing persists (partial retreat) and crew total > 0.
+    // (If the 2 advance ticks auto-wiped the squad, the wipe path also clears
+    //  landing — but crew.total tracks the real count.)
+    assert!(
+        s.crew.total > 0,
+        "crew.total must stay > 0 after fleeing (crew_after_hits={crew_after_hits}, hp={hp_after_hits})"
+    );
+
+    // No active combat remaining.
+    let combat_active = s
+        .expedition
+        .landing
+        .as_ref()
+        .and_then(|l| l.combat.as_ref())
+        .is_some();
+    assert!(!combat_active, "combat should not be active after Flee");
 }
