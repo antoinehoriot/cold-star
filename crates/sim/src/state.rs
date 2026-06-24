@@ -3885,4 +3885,42 @@ mod tests {
         s.apply(&w, Action::Land(idx)).unwrap();
         assert!(s.apply(&w, Action::AttackAlien).is_err());
     }
+
+    #[test]
+    fn advance_n_equals_n_times_advance_1_during_alien_negotiation() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let setup = |s: &mut GameState| {
+            s.ship.built = true;
+            s.ship.cargo = 500.0;
+            s.crew.total = 3;
+            s.apply(&w, Action::SetAwayCrew { delta: 3 }).unwrap();
+            s.expedition.location = crate::galaxy::SystemId(1);
+            let idx = plant_planet(s, crate::galaxy::Biome::Ruined);
+            s.apply(&w, Action::Land(idx)).unwrap();
+            // Inject an open Peer alien at neutral disposition.  No verb is applied so
+            // disposition stays static; the Suit drains each tick — that is the live
+            // sub-state being advanced deterministically.
+            s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+                kind: crate::alien::AlienKind::Peer,
+                disposition: 0.0,
+            });
+            // Rations keep the away team fed through the window.
+            s.expedition.cargo.insert(ResourceKind::Rations, 1000.0);
+        };
+        let mut bulk = GameState::new(&w, 1);
+        setup(&mut bulk);
+        let mut step = GameState::new(&w, 1);
+        setup(&mut step);
+        // Sanity: alien must be present at tick 0 or the test proves nothing.
+        assert!(
+            bulk.expedition.landing.as_ref().unwrap().alien.is_some(),
+            "alien must be active at tick 0 for this test to be meaningful"
+        );
+        bulk.advance(&w, 20);
+        for _ in 0..20 {
+            step.advance(&w, 1);
+        }
+        assert_eq!(bulk, step);
+    }
 }

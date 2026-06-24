@@ -3,6 +3,8 @@
 //! milestones in windows; never permanently deadlocks). Tuning regression
 //! test (spec §9).
 
+use sim::alien::{AlienEncounter, AlienKind};
+use sim::codex::NoteId;
 use sim::combat::remnant_stats;
 use sim::flags::Flag;
 use sim::galaxy::{Biome, Site, SiteKind, SystemId};
@@ -633,4 +635,243 @@ fn cb1_weak_squad_can_flee() {
         s.expedition.landing.is_none(),
         "landing should be cleared after Extract"
     );
+}
+
+/// CB2 — a Peer encountered on a Ruined planet can be spared (Gift → Parley to
+/// peace) OR killed (AttackAlien → advance to win).  Both outcomes recorded in
+/// `peers_spared` / `peers_killed` counters.  Disposition math is deterministic
+/// and exercised through the Action API only.
+///
+/// Disposition path for spare:
+///   start = 0.0 → Gift (+35) = 35.0 (Curious) → Parley (+18) = 53.0 ≥ peace_band(30) → spared.
+///
+/// Kill path: tier-0 gear (peer mirror = 1×), 6-crew squad, advance until
+/// combat resolves — mirrors cb1_geared_squad_clears_a_remnant.
+#[test]
+fn cb2_peer_can_be_spared_or_killed() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+
+    // ── Shared setup helper ────────────────────────────────────────────────────
+    // Returns a GameState landed on a Ruined planet at SystemId(1) with
+    // XenoContactKnown, a 6-crew away-team (tier-0 gear), and Rations in cargo.
+    let base_setup = || {
+        let mut s = GameState::new(&w, 6);
+        s.flags.insert(Flag::XenoContactKnown);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        // Crew must be committed while docked at HOME (location == HOME).
+        s.crew.total = 6;
+        s.apply(&w, Action::SetAwayCrew { delta: 6 }).unwrap();
+        assert_eq!(s.expedition.away_team.crew, 6);
+        // weapon_tier 0 keeps peer_stats mirror at 1× so the squad can win.
+        assert_eq!(s.gear.weapon_tier, 0);
+        // Move to remote system and register a Ruined planet.
+        s.expedition.location = SystemId(1);
+        let sites = s.galaxy_state.sites.entry(1).or_default();
+        sites.push(Site::new(SiteKind::Planet(Biome::Ruined)));
+        s.apply(&w, Action::Land(0)).unwrap();
+        assert!(s.expedition.landing.is_some(), "should be landed");
+        s.expedition.cargo.insert(ResourceKind::Rations, 1000.0);
+        s
+    };
+
+    // ── SPARE PATH ────────────────────────────────────────────────────────────
+    {
+        let mut s = base_setup();
+        // Enough Components to pay the gift cost (gift_cost = 10.0).
+        s.expedition.cargo.insert(ResourceKind::Components, 100.0);
+        // Inject a Peer at disposition 0.0 (Neutral band — Gift and Parley allowed).
+        s.expedition.landing.as_mut().unwrap().alien = Some(AlienEncounter {
+            kind: AlienKind::Peer,
+            disposition: 0.0,
+        });
+        // Gift: 0.0 + 35.0 = 35.0 → Curious.
+        s.apply(&w, Action::Gift).expect("Gift must succeed");
+        let disp_after_gift = s
+            .expedition
+            .landing
+            .as_ref()
+            .unwrap()
+            .alien
+            .as_ref()
+            .unwrap()
+            .disposition;
+        assert!(
+            disp_after_gift >= t.disp_curious,
+            "disposition should reach Curious after Gift (got {disp_after_gift})"
+        );
+        // Parley: 35.0 + 18.0 = 53.0 ≥ peace_band(30.0) → Peer spared, alien cleared.
+        s.apply(&w, Action::Parley).expect("Parley must succeed");
+        assert_eq!(
+            s.peers_spared, 1,
+            "peers_spared must be 1 after peaceful resolution"
+        );
+        assert!(
+            s.expedition.landing.as_ref().unwrap().alien.is_none(),
+            "alien must be gone after peaceful resolution"
+        );
+        assert!(
+            s.expedition.landing.as_ref().unwrap().combat.is_none(),
+            "no combat should have started on the spare path"
+        );
+    }
+
+    // ── KILL PATH ─────────────────────────────────────────────────────────────
+    {
+        let mut s = base_setup();
+        // Inject a fresh Peer alien (disposition irrelevant — we immediately attack).
+        s.expedition.landing.as_mut().unwrap().alien = Some(AlienEncounter {
+            kind: AlienKind::Peer,
+            disposition: 0.0,
+        });
+        // AttackAlien converts the alien into a Combat encounter.
+        s.apply(&w, Action::AttackAlien)
+            .expect("AttackAlien must succeed");
+        assert!(
+            s.expedition.landing.as_ref().unwrap().combat.is_some(),
+            "combat must start after AttackAlien"
+        );
+        // Advance until combat resolves (mirrors cb1_geared_squad_clears_a_remnant).
+        for _ in 0..200 {
+            let in_combat = s
+                .expedition
+                .landing
+                .as_ref()
+                .and_then(|l| l.combat.as_ref())
+                .is_some();
+            if !in_combat {
+                break;
+            }
+            s.advance(&w, 1);
+        }
+        let combat_still_active = s
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.combat.as_ref())
+            .is_some();
+        assert!(
+            !combat_still_active,
+            "combat should resolve within 200 ticks"
+        );
+        assert_eq!(
+            s.peers_killed, 1,
+            "peers_killed must be 1 after defeating a Peer"
+        );
+        assert!(
+            s.expedition.away_team.crew > 0,
+            "squad must survive killing a tier-0 Peer (crew=6, mirror=1×)"
+        );
+    }
+}
+
+/// CB2 — Fauna on a Verdant planet can be observed (Data in satchel, alien
+/// still open) OR harvested (Rations in satchel, FirstFaunaDisplaced note
+/// fired, alien cleared/resolved).
+#[test]
+fn cb2_fauna_observe_or_harvest() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+
+    // Shared setup: landed on a Verdant planet with XenoContactKnown.
+    // No away-team needed for observe/harvest — verbs only require a landing.
+    let base_setup = || {
+        let mut s = GameState::new(&w, 6);
+        s.flags.insert(Flag::XenoContactKnown);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        s.expedition.location = SystemId(3);
+        let sites = s.galaxy_state.sites.entry(3).or_default();
+        sites.push(Site::new(SiteKind::Planet(Biome::Verdant)));
+        s.apply(&w, Action::Land(0)).unwrap();
+        assert!(s.expedition.landing.is_some());
+        s
+    };
+
+    // ── OBSERVE PATH ──────────────────────────────────────────────────────────
+    // Observe yields Data and leaves the alien open (does not resolve encounter).
+    {
+        let mut s = base_setup();
+        // Inject a non-hostile Fauna alien (Neutral band).
+        s.expedition.landing.as_mut().unwrap().alien = Some(AlienEncounter {
+            kind: AlienKind::Fauna,
+            disposition: 0.0,
+        });
+        let data_before = s
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.satchel.get(&ResourceKind::Data))
+            .copied()
+            .unwrap_or(0.0);
+        s.apply(&w, Action::Observe)
+            .expect("Observe must succeed on non-hostile Fauna");
+        let data_after = s
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.satchel.get(&ResourceKind::Data))
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            data_after > data_before,
+            "Observe must add Data to satchel (before={data_before}, after={data_after})"
+        );
+        // Observe must NOT resolve the encounter — the alien remains open.
+        assert!(
+            s.expedition.landing.as_ref().unwrap().alien.is_some(),
+            "Observe must leave the alien encounter open (non-destructive)"
+        );
+    }
+
+    // ── HARVEST PATH ──────────────────────────────────────────────────────────
+    // Harvest yields Rations, fires FirstFaunaDisplaced note, resolves the alien.
+    {
+        let mut s = base_setup();
+        s.expedition.landing.as_mut().unwrap().alien = Some(AlienEncounter {
+            kind: AlienKind::Fauna,
+            disposition: 0.0,
+        });
+        let rations_before = s
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.satchel.get(&ResourceKind::Rations))
+            .copied()
+            .unwrap_or(0.0);
+        s.apply(&w, Action::Harvest)
+            .expect("Harvest must succeed on Fauna");
+        let rations_after = s
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.satchel.get(&ResourceKind::Rations))
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            rations_after > rations_before,
+            "Harvest must add Rations to satchel (before={rations_before}, after={rations_after})"
+        );
+        assert!(
+            s.codex
+                .has(sim::codex::DiscoveryId::Note(NoteId::FirstFaunaDisplaced)),
+            "Harvest must fire the FirstFaunaDisplaced note"
+        );
+        // Harvest resolves the encounter — alien is cleared.
+        assert!(
+            s.expedition.landing.as_ref().unwrap().alien.is_none(),
+            "Harvest must clear the alien encounter (resolved)"
+        );
+    }
 }
