@@ -14,6 +14,7 @@ use crate::galaxy::{
     Biome, Galaxy, GalaxyState, HOME, SiteKind, SystemId, distance, jump_cost, materialize_sites,
     reveal_from,
 };
+use crate::gear::{ConsumableKind, Gear};
 use crate::job::{JobId, JobRegistry};
 use crate::landing::{Landing, SurfaceSite, surface_seed};
 use crate::log::Log;
@@ -64,6 +65,9 @@ pub enum Action {
     MoveToNode(u32),
     HarvestLife,
     LeaveLife,
+    UpgradeWeapon,
+    UpgradeArmor,
+    CraftConsumable(ConsumableKind),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +99,8 @@ pub struct GameState {
     pub ship: Ship,
     pub expedition: Expedition,
     pub galaxy_state: GalaxyState,
+    pub gear: Gear,
+    pub consumables: BTreeMap<ConsumableKind, u32>,
 }
 
 impl GameState {
@@ -140,6 +146,8 @@ impl GameState {
             ship: Ship::new(tuning),
             expedition: Expedition::default(),
             galaxy_state: GalaxyState::default(),
+            gear: Gear::default(),
+            consumables: BTreeMap::new(),
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -905,6 +913,61 @@ impl GameState {
                 );
                 Ok(())
             }
+            Action::UpgradeWeapon => {
+                if !self.has_module(ModuleId::Armory) {
+                    return Err(Rejected("no armory"));
+                }
+                if self.gear.weapon_tier >= 2 {
+                    return Err(Rejected("weapon at max tier"));
+                }
+                let cost = vec![
+                    (ResourceKind::Alloy, tuning.weapon_upgrade_alloy),
+                    (ResourceKind::Components, tuning.weapon_upgrade_components),
+                ];
+                if !self.resources.try_spend_all(&cost) {
+                    return Err(Rejected("not enough materials"));
+                }
+                self.gear.weapon_tier += 1;
+                Ok(())
+            }
+            Action::UpgradeArmor => {
+                if !self.has_module(ModuleId::Armory) {
+                    return Err(Rejected("no armory"));
+                }
+                if self.gear.armor_tier >= 2 {
+                    return Err(Rejected("armor at max tier"));
+                }
+                let cost = vec![
+                    (ResourceKind::Alloy, tuning.armor_upgrade_alloy),
+                    (ResourceKind::Components, tuning.armor_upgrade_components),
+                ];
+                if !self.resources.try_spend_all(&cost) {
+                    return Err(Rejected("not enough materials"));
+                }
+                self.gear.armor_tier += 1;
+                Ok(())
+            }
+            Action::CraftConsumable(kind) => {
+                if !self.has_module(ModuleId::Armory) {
+                    return Err(Rejected("no armory"));
+                }
+                let cost = match kind {
+                    ConsumableKind::MedGel => {
+                        vec![(ResourceKind::Components, tuning.medgel_cost)]
+                    }
+                    ConsumableKind::Grenade => {
+                        vec![(ResourceKind::Components, tuning.grenade_cost)]
+                    }
+                    ConsumableKind::Shield => {
+                        vec![(ResourceKind::Components, tuning.shield_cost)]
+                    }
+                };
+                if !self.resources.try_spend_all(&cost) {
+                    return Err(Rejected("not enough materials"));
+                }
+                *self.consumables.entry(kind).or_insert(0) += 1;
+                Ok(())
+            }
         }
     }
 
@@ -1489,6 +1552,18 @@ mod tests {
                 repeatable: false,
                 requires_modules: vec![],
                 requires_flag: Some(Flag::JumpTheoryKnown),
+                unlocks: ModuleUnlocks::default(),
+            },
+            Module {
+                id: ModuleId::Armory,
+                name: "Armory".into(),
+                description: "test".into(),
+                tier: 2,
+                cost: vec![(ResourceKind::Alloy, 10.0)],
+                cost_scaling: 1.0,
+                repeatable: false,
+                requires_modules: vec![],
+                requires_flag: Some(Flag::CombatDoctrineKnown),
                 unlocks: ModuleUnlocks::default(),
             },
         ])
@@ -2620,5 +2695,34 @@ mod tests {
         // Advancing arrives back at the entry node: the back-move is real.
         s.advance(&w, t.traverse_ticks as u64);
         assert_eq!(s.expedition.landing.as_ref().unwrap().node, 0);
+    }
+
+    #[test]
+    fn armory_crafting_upgrades_gear_and_stocks_consumables() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        // No Armory yet → rejected.
+        assert!(s.apply(&w, Action::UpgradeWeapon).is_err());
+        s.flags.insert(Flag::CombatDoctrineKnown);
+        s.resources.add(ResourceKind::Alloy, 500.0);
+        s.resources.add(ResourceKind::Components, 500.0);
+        s.apply(&w, Action::Build(ModuleId::Armory)).unwrap();
+        assert!(s.apply(&w, Action::UpgradeWeapon).is_ok());
+        assert_eq!(s.gear.weapon_tier, 1);
+        assert!(
+            s.apply(
+                &w,
+                Action::CraftConsumable(crate::gear::ConsumableKind::MedGel)
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            s.consumables
+                .get(&crate::gear::ConsumableKind::MedGel)
+                .copied()
+                .unwrap_or(0),
+            1
+        );
     }
 }
