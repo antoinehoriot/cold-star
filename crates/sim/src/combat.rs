@@ -8,6 +8,13 @@ pub enum Stance {
     Defensive,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EnemyKind {
+    Remnant,
+    Fauna,
+    Peer,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Combat {
     pub enemy_hp: f64,
@@ -16,6 +23,7 @@ pub struct Combat {
     pub enemy_speed: f64,
     pub stance: Stance,
     pub shield_ticks: u32,
+    pub kind: EnemyKind,
 }
 
 pub fn remnant_stats(depth: u32, grad: f64, t: &Tuning) -> Combat {
@@ -27,6 +35,7 @@ pub fn remnant_stats(depth: u32, grad: f64, t: &Tuning) -> Combat {
         enemy_speed: t.remnant_speed,
         stance: Stance::Defensive,
         shield_ticks: 0,
+        kind: EnemyKind::Remnant,
     }
 }
 

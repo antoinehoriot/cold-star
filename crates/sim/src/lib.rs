@@ -1,6 +1,7 @@
 //! Cold Star simulation core. Pure, deterministic, platform-agnostic.
 #![forbid(unsafe_code)]
 
+pub mod alien;
 pub mod codex;
 pub mod combat;
 pub mod config;
@@ -27,8 +28,9 @@ pub mod state;
 pub mod telemetry;
 pub mod time;
 
+pub use alien::{AlienEncounter, AlienKind, Band};
 pub use codex::{Codex, Discovery, DiscoveryId, NoteId};
-pub use combat::{Combat, Stance};
+pub use combat::{Combat, EnemyKind, Stance};
 pub use config::Tuning;
 pub use crew::Crew;
 pub use economy::{EconomyReport, job_ready, run_economy};

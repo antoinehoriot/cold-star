@@ -105,6 +105,8 @@ pub struct GameState {
     pub galaxy_state: GalaxyState,
     pub gear: Gear,
     pub consumables: BTreeMap<ConsumableKind, u32>,
+    pub peers_spared: u32,
+    pub peers_killed: u32,
 }
 
 impl GameState {
@@ -152,6 +154,8 @@ impl GameState {
             galaxy_state: GalaxyState::default(),
             gear: Gear::default(),
             consumables: BTreeMap::new(),
+            peers_spared: 0,
+            peers_killed: 0,
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -837,6 +841,7 @@ impl GameState {
                     pending_choice: false,
                     traverse: 0,
                     combat: None,
+                    alien: None,
                 });
                 self.mark_resolved(loc, idx, 0);
                 self.log.push(

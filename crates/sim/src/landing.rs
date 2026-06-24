@@ -20,6 +20,7 @@ pub struct Landing {
     pub pending_choice: bool,
     pub traverse: u32,
     pub combat: Option<crate::combat::Combat>,
+    pub alien: Option<crate::alien::AlienEncounter>,
 }
 
 impl Landing {
