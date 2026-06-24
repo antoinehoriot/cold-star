@@ -158,6 +158,58 @@ pub struct Tuning {
     pub medgel_cost: f64,
     pub grenade_cost: f64,
     pub shield_cost: f64,
+
+    // CB2 — aliens & disposition
+    /// Disposition threshold below which an entity is Hostile.
+    pub disp_hostile: f64,
+    /// Disposition threshold below which an entity is Neutral (above disp_hostile).
+    pub disp_neutral: f64,
+    /// Disposition threshold at/above which an entity is Curious/Friendly.
+    pub disp_curious: f64,
+    /// Starting disposition for fauna encounters.
+    pub fauna_start_disp: f64,
+    /// Starting disposition for peer (alien crew) encounters.
+    pub peer_start_disp: f64,
+    /// Seeded random range applied around the start disposition.
+    pub disp_spread: f64,
+    /// Disposition shift from a successful parley action.
+    pub parley_shift: f64,
+    /// Disposition shift from offering a gift.
+    pub gift_shift: f64,
+    /// Resource cost of a gift action.
+    pub gift_cost: f64,
+    /// Resources given per trade offer.
+    pub trade_give: f64,
+    /// Resources received per trade offer.
+    pub trade_get: f64,
+    /// Disposition shift from completing a trade.
+    pub trade_disp_shift: f64,
+    /// Data gained from observing an alien entity.
+    pub observe_data: f64,
+    /// Disposition shift from observing (non-hostile).
+    pub observe_shift: f64,
+    /// Yield from harvesting fauna.
+    pub harvest_fauna_yield: f64,
+    /// Base HP for fauna combatants.
+    pub fauna_hp: f64,
+    /// Base attack for fauna combatants.
+    pub fauna_atk: f64,
+    /// Base defence for fauna combatants.
+    pub fauna_def: f64,
+    /// Base HP for peer combatants.
+    pub peer_hp: f64,
+    /// Base attack for peer combatants.
+    pub peer_atk: f64,
+    /// Base defence for peer combatants.
+    pub peer_def: f64,
+    /// How strongly a peer scales with the player's weapon tier (0–1).
+    pub peer_gear_mirror: f64,
+    /// Salvage yield from defeating a peer.
+    pub peer_salvage: f64,
+    /// Salvage yield from defeating fauna.
+    pub fauna_salvage: f64,
+    /// Disposition at/above which a Peer is spared on parley (= disp_curious).
+    pub peace_band: f64,
 }
 
 impl Default for Tuning {
@@ -267,6 +319,32 @@ impl Default for Tuning {
             medgel_cost: 5.0,
             grenade_cost: 8.0,
             shield_cost: 6.0,
+            // CB2 — aliens & disposition
+            disp_hostile: -40.0,
+            disp_neutral: -10.0,
+            disp_curious: 30.0,
+            fauna_start_disp: -25.0,
+            peer_start_disp: 0.0,
+            disp_spread: 40.0,
+            parley_shift: 18.0,
+            gift_shift: 35.0,
+            gift_cost: 10.0,
+            trade_give: 15.0,
+            trade_get: 10.0,
+            trade_disp_shift: 6.0,
+            observe_data: 6.0,
+            observe_shift: 8.0,
+            harvest_fauna_yield: 16.0,
+            fauna_hp: 35.0,
+            fauna_atk: 5.0,
+            fauna_def: 2.0,
+            peer_hp: 70.0,
+            peer_atk: 8.0,
+            peer_def: 4.0,
+            peer_gear_mirror: 0.5,
+            peer_salvage: 12.0,
+            fauna_salvage: 8.0,
+            peace_band: 30.0,
         }
     }
 }

@@ -263,6 +263,45 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "morale_floor must be finite in (0, 1]".into(),
         ));
     }
+    // CB2 — aliens & disposition
+    // Band thresholds: ordering assertion (not non-negative — they may be negative)
+    if !t.disp_hostile.is_finite() || !t.disp_neutral.is_finite() || !t.disp_curious.is_finite() {
+        return Err(ContentError::Invalid(
+            "disp_hostile/disp_neutral/disp_curious must all be finite".into(),
+        ));
+    }
+    if !(t.disp_hostile < t.disp_neutral && t.disp_neutral < t.disp_curious) {
+        return Err(ContentError::Invalid(
+            "disposition bands must satisfy disp_hostile < disp_neutral < disp_curious".into(),
+        ));
+    }
+    // Positive-magnitude fields: finite >= 0
+    for (name, v) in [
+        ("parley_shift", t.parley_shift),
+        ("gift_shift", t.gift_shift),
+        ("gift_cost", t.gift_cost),
+        ("trade_give", t.trade_give),
+        ("trade_get", t.trade_get),
+        ("trade_disp_shift", t.trade_disp_shift),
+        ("observe_data", t.observe_data),
+        ("observe_shift", t.observe_shift),
+        ("harvest_fauna_yield", t.harvest_fauna_yield),
+        ("fauna_hp", t.fauna_hp),
+        ("fauna_atk", t.fauna_atk),
+        ("fauna_def", t.fauna_def),
+        ("peer_hp", t.peer_hp),
+        ("peer_atk", t.peer_atk),
+        ("peer_def", t.peer_def),
+        ("peer_gear_mirror", t.peer_gear_mirror),
+        ("peer_salvage", t.peer_salvage),
+        ("fauna_salvage", t.fauna_salvage),
+        ("disp_spread", t.disp_spread),
+        ("peace_band", t.peace_band),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
     Ok(())
 }
 
@@ -766,5 +805,17 @@ mod tests {
         assert_eq!(t.remnant_hp, 60.0);
         assert_eq!(t.flee_satchel_loss_frac, 0.25);
         assert_eq!(t.medgel_cost, 5.0);
+    }
+
+    #[test]
+    fn loads_cb2_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.disp_hostile, -40.0);
+        assert_eq!(t.disp_curious, 30.0);
+        assert_eq!(t.parley_shift, 18.0);
+        assert_eq!(t.gift_shift, 35.0);
+        assert_eq!(t.peer_hp, 70.0);
+        assert_eq!(t.peer_gear_mirror, 0.5);
+        assert_eq!(t.harvest_fauna_yield, 16.0);
     }
 }
