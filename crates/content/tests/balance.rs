@@ -257,9 +257,23 @@ fn m4_travel_loop_brings_isotopes_home() {
     s.advance(&w, t.scan_ticks as u64);
     assert!(s.galaxy_state.scanned.contains(&target.0));
 
+    // Helper: advance tick-by-tick until the ship's current activity completes,
+    // capped at 500 ticks for safety. Real transits are ~8-12 ticks; site
+    // resolves are driven by site_resolve_ticks (similarly short). This avoids
+    // ~190 idle ticks of reactor-fuel burn that the old fixed-200 advances caused.
+    macro_rules! advance_until_idle {
+        ($s:expr, $w:expr) => {{
+            let mut guard = 0u32;
+            while $s.expedition.activity.is_some() && guard < 500 {
+                $s.advance($w, 1);
+                guard += 1;
+            }
+        }};
+    }
+
     // Jump out, resolve every site present, jump home.
     s.apply(&w, Action::Jump(target)).unwrap();
-    s.advance(&w, 200); // generous: cover transit fully
+    advance_until_idle!(s, &w);
     assert_eq!(s.expedition.location, target, "ship should arrive");
 
     let n_sites = s
@@ -270,15 +284,15 @@ fn m4_travel_loop_brings_isotopes_home() {
         .unwrap_or(0);
     for idx in 0..n_sites {
         if s.apply(&w, Action::ResolveSite(target, idx)).is_ok() {
-            s.advance(&w, t.site_resolve_ticks as u64);
+            advance_until_idle!(s, &w);
         }
     }
 
-    // Replenish fuel consumed by transit + reactor draw before the return jump.
-    s.resources.add(ResourceKind::Fuel, 100.0);
+    // No fuel top-up here — all fuel was provisioned at home before departure.
+    // With short transits (~8-12 ticks each) the round trip burns well under 100 units.
     let iso_home_before = s.resources.amount(ResourceKind::Isotopes);
     s.apply(&w, Action::Jump(sim::galaxy::HOME)).unwrap();
-    s.advance(&w, 200);
+    advance_until_idle!(s, &w);
     assert_eq!(
         s.expedition.location,
         sim::galaxy::HOME,
@@ -289,8 +303,8 @@ fn m4_travel_loop_brings_isotopes_home() {
     // The station kept ticking and never deadlocked; charge stayed in range.
     assert!(s.reactor.charge >= 0.0 && s.reactor.charge <= s.reactor.capacity);
 
-    // If the scanned system held an asteroid field, Isotopes came home. (Seed 4's
-    // reachable neighbor is asteroid-bearing; this asserts the import path end to end.)
+    // Seed 6's reachable neighbor is asteroid-bearing; this asserts the import
+    // path end to end: scan → jump → resolve → return deposits Isotopes at home.
     assert!(
         s.resources.amount(ResourceKind::Isotopes) > iso_home_before,
         "an asteroid run should deposit Isotopes at the station"
