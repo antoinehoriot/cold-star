@@ -1078,6 +1078,21 @@ impl GameState {
                     landing.node,
                 );
                 self.resolve_node(world, system, site_idx, biome, node);
+                // A fatal hazard this tick must force the retreat NOW — not at the next
+                // tick's top — so the player can't Extract on a blown Suit and keep the haul.
+                if self
+                    .expedition
+                    .landing
+                    .as_ref()
+                    .is_some_and(|l| l.suit <= 0.0)
+                {
+                    self.expedition.landing = None;
+                    self.log.push(
+                        self.tick,
+                        "Suit critical. You scramble back empty-handed.",
+                        tuning.log_capacity,
+                    );
+                }
             }
         }
     }
@@ -2406,6 +2421,64 @@ mod tests {
             biome,
         )));
         v.len() - 1
+    }
+
+    #[test]
+    fn fatal_hazard_forces_retreat_same_tick_no_extract() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        // Find a seed whose Toxic surface has a Hazard node directly off the entry.
+        for seed in 1..80u64 {
+            let mut s = GameState::new(&w, seed);
+            s.ship.built = true;
+            s.expedition.location = crate::galaxy::SystemId(1);
+            let idx = plant_planet(&mut s, crate::galaxy::Biome::Toxic);
+            s.apply(&w, Action::Land(idx)).unwrap();
+            let site = s.surface_for_test(&w);
+            let hazard = site.nodes[0].edges.iter().copied().find(|&e| {
+                site.get(e).map(|n| n.kind) == Some(crate::landing::EncounterKind::Hazard)
+            });
+            let Some(hz) = hazard else { continue };
+            // Suit survives the ambient drain to arrival, then the hazard hit (>=18) blows it.
+            s.expedition.landing.as_mut().unwrap().suit = 10.0;
+            s.apply(&w, Action::MoveToNode(hz)).unwrap();
+            s.advance(&w, t.traverse_ticks as u64); // arrive + resolve hazard this tick
+            assert!(
+                !s.landed(),
+                "a fatal hazard must force retreat the same tick (seed {seed})"
+            );
+            assert!(
+                s.expedition.cargo.is_empty(),
+                "no haul banked on a blown suit"
+            );
+            return;
+        }
+        panic!("no Toxic seed with a hazard adjacent to the entry in 1..80");
+    }
+
+    #[test]
+    fn advance_n_equals_n_times_advance_1_during_a_landing() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let setup = |s: &mut GameState| {
+            s.ship.built = true;
+            s.expedition.location = crate::galaxy::SystemId(1);
+            let idx = plant_planet(s, crate::galaxy::Biome::Verdant);
+            s.apply(&w, Action::Land(idx)).unwrap();
+            // Begin a traverse so a move + resolve happens during advance.
+            let site = s.surface_for_test(&w);
+            let target = site.nodes[0].edges[0];
+            s.apply(&w, Action::MoveToNode(target)).unwrap();
+        };
+        let mut bulk = GameState::new(&w, 1);
+        setup(&mut bulk);
+        let mut step = GameState::new(&w, 1);
+        setup(&mut step);
+        bulk.advance(&w, 20);
+        for _ in 0..20 {
+            step.advance(&w, 1);
+        }
+        assert_eq!(bulk, step);
     }
 
     #[test]
