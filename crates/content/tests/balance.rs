@@ -202,3 +202,97 @@ fn atmosphere_crisis_is_survivable_by_repowering() {
         "repowering before the clock expires saves the crew"
     );
 }
+
+#[test]
+fn m4_travel_loop_brings_isotopes_home() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+    // Seed 6 is pinned: its first reachable revealed neighbor holds an AsteroidField,
+    // making the full loop (scan → jump → resolve → return with Isotopes) possible.
+    // Seeds 4 and 5 have no asteroid field on their nearest reachable neighbor.
+    let mut s = GameState::new(&w, 6);
+
+    // Bootstrap to the stars with seeded resources (we test mechanics, not grind):
+    // build the prerequisite chain and unlock jump theory + sensors.
+    // Resources are added just before each build because the base storage cap is 100;
+    // adding all up front would overflow and leave insufficient for later builds.
+    s.flags.insert(sim::flags::Flag::JumpTheoryKnown);
+    s.resources.add(ResourceKind::Scrap, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Fabricator)).unwrap(); // costs Scrap 20
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Lab)).unwrap(); // costs Alloy 20
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Data, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Assembler)).unwrap(); // costs Alloy 25 + Data 10
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Components, 100.0);
+    s.resources.add(ResourceKind::Fuel, 100.0);
+    s.apply(&w, Action::Build(ModuleId::Shipyard)).unwrap(); // costs Alloy 40 + Components 20 + Fuel 15
+    s.resources.add(ResourceKind::Alloy, 100.0);
+    s.resources.add(ResourceKind::Components, 100.0);
+    s.apply(&w, Action::Build(ModuleId::SensorArray)).unwrap(); // costs Alloy 20 + Components 10
+    assert!(s.ship.built, "shipyard must produce a ship");
+
+    // Top up fuel so we have enough for both jumps plus reactor draw during transits.
+    s.resources.add(ResourceKind::Fuel, 100.0);
+
+    // Pick a revealed, reachable neighbor and scan it.
+    let galaxy = s.galaxy(&w);
+    let here = galaxy.get(s.expedition.location).unwrap();
+    let target = s
+        .galaxy_state
+        .revealed
+        .iter()
+        .map(|&id| sim::galaxy::SystemId(id))
+        .filter(|&id| id != s.expedition.location)
+        .find(|&id| sim::galaxy::distance(here, galaxy.get(id).unwrap()) <= s.ship.drive_range)
+        .expect("a reachable neighbor is revealed from home at base drive range");
+
+    s.apply(&w, Action::ScanSystem(target)).unwrap();
+    s.advance(&w, t.scan_ticks as u64);
+    assert!(s.galaxy_state.scanned.contains(&target.0));
+
+    // Jump out, resolve every site present, jump home.
+    s.apply(&w, Action::Jump(target)).unwrap();
+    s.advance(&w, 200); // generous: cover transit fully
+    assert_eq!(s.expedition.location, target, "ship should arrive");
+
+    let n_sites = s
+        .galaxy_state
+        .sites
+        .get(&target.0)
+        .map(|v| v.len())
+        .unwrap_or(0);
+    for idx in 0..n_sites {
+        if s.apply(&w, Action::ResolveSite(target, idx)).is_ok() {
+            s.advance(&w, t.site_resolve_ticks as u64);
+        }
+    }
+
+    // Replenish fuel consumed by transit + reactor draw before the return jump.
+    s.resources.add(ResourceKind::Fuel, 100.0);
+    let iso_home_before = s.resources.amount(ResourceKind::Isotopes);
+    s.apply(&w, Action::Jump(sim::galaxy::HOME)).unwrap();
+    s.advance(&w, 200);
+    assert_eq!(
+        s.expedition.location,
+        sim::galaxy::HOME,
+        "ship should return home"
+    );
+    assert!(!s.away());
+
+    // The station kept ticking and never deadlocked; charge stayed in range.
+    assert!(s.reactor.charge >= 0.0 && s.reactor.charge <= s.reactor.capacity);
+
+    // If the scanned system held an asteroid field, Isotopes came home. (Seed 4's
+    // reachable neighbor is asteroid-bearing; this asserts the import path end to end.)
+    assert!(
+        s.resources.amount(ResourceKind::Isotopes) > iso_home_before,
+        "an asteroid run should deposit Isotopes at the station"
+    );
+}
