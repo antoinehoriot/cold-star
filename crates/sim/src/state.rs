@@ -179,7 +179,6 @@ impl GameState {
         self.expedition.landing.is_some()
     }
 
-    #[allow(dead_code)]
     fn surface_site(
         &self,
         world: &World,
@@ -806,6 +805,7 @@ impl GameState {
                     pending_choice: false,
                     traverse: 0,
                 });
+                self.mark_resolved(loc, idx, 0);
                 self.log.push(
                     self.tick,
                     "Dropship down. Your boots find a world.",
@@ -831,10 +831,27 @@ impl GameState {
                 );
                 Ok(())
             }
-            // Temporary stubs — replaced in Tasks 5 and 6.
-            Action::MoveToNode(_) | Action::HarvestLife | Action::LeaveLife => {
-                Err(Rejected("not yet on the surface"))
+            Action::MoveToNode(target) => {
+                let Some(landing) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if landing.pending_choice {
+                    return Err(Rejected("resolve the encounter first"));
+                }
+                if landing.traverse > 0 {
+                    return Err(Rejected("already moving"));
+                }
+                let site =
+                    self.surface_site(world, landing.system, landing.site_idx, landing.biome);
+                if !site.is_edge(landing.node, target) {
+                    return Err(Rejected("no route to that node"));
+                }
+                self.expedition.landing.as_mut().unwrap().traverse = tuning.traverse_ticks;
+                self.expedition.landing.as_mut().unwrap().node = target;
+                Ok(())
             }
+            // Temporary stubs — replaced in Task 6.
+            Action::HarvestLife | Action::LeaveLife => Err(Rejected("nothing to resolve")),
         }
     }
 
@@ -982,20 +999,134 @@ impl GameState {
         }
     }
 
-    /// Drain Suit while landed; on Suit failure, force a retreat and lose the
-    /// satchel. (Traverse + encounter resolution land in Task 5.)
     fn tick_landing(&mut self, world: &World) {
         let tuning = world.tuning;
-        if let Some(landing) = self.expedition.landing.as_mut() {
-            landing.suit -= tuning.suit_drain_per_tick;
-            if landing.suit <= 0.0 {
-                self.expedition.landing = None;
+        let Some(landing) = self.expedition.landing.as_mut() else {
+            return;
+        };
+        landing.suit -= tuning.suit_drain_per_tick;
+        if landing.suit <= 0.0 {
+            self.expedition.landing = None;
+            self.log.push(
+                self.tick,
+                "Suit critical. You scramble back empty-handed.",
+                tuning.log_capacity,
+            );
+            return;
+        }
+        if landing.traverse > 0 {
+            landing.traverse -= 1;
+            if landing.traverse == 0 {
+                // Arrived at `landing.node`: resolve its encounter once.
+                let (system, site_idx, biome, node) = (
+                    landing.system,
+                    landing.site_idx,
+                    landing.biome,
+                    landing.node,
+                );
+                self.resolve_node(world, system, site_idx, biome, node);
+            }
+        }
+    }
+
+    /// Resolve the encounter at `node` once (records it in the site overlay).
+    fn resolve_node(
+        &mut self,
+        world: &World,
+        system: SystemId,
+        site_idx: usize,
+        biome: Biome,
+        node: u32,
+    ) {
+        let tuning = world.tuning;
+        // Already resolved? (entry/empty included via overlay)
+        let already = self
+            .galaxy_state
+            .sites
+            .get(&system.0)
+            .and_then(|v| v.get(site_idx))
+            .map(|s| s.resolved_nodes.contains(&node))
+            .unwrap_or(true);
+        if already {
+            return;
+        }
+        let site = self.surface_site(world, system, site_idx, biome);
+        let Some(n) = site.get(node) else { return };
+        let kind = n.kind;
+        let depth = n.depth;
+        // Frontier gradient: richer the deeper the system is from home.
+        let galaxy = self.galaxy(world);
+        let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
+            (Some(h), Some(s)) => 1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient,
+            _ => 1.0,
+        };
+        let depth_mult = 1.0 + depth as f64 * tuning.surface_depth_reward;
+        match kind {
+            crate::landing::EncounterKind::ResourceCache => {
+                let amt = tuning.surface_cache_base * depth_mult * grad;
+                let kind_res = match biome {
+                    Biome::Frozen => ResourceKind::Alloy,
+                    Biome::Toxic => ResourceKind::Components,
+                    Biome::Verdant => ResourceKind::Rations,
+                    Biome::Ruined => ResourceKind::Isotopes,
+                };
+                self.satchel_add(kind_res, amt);
+                self.log
+                    .push(self.tick, "A cache. You pry it loose.", tuning.log_capacity);
+            }
+            crate::landing::EncounterKind::Hazard => {
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.suit -= tuning.suit_hazard_damage * depth_mult;
+                }
                 self.log.push(
                     self.tick,
-                    "Suit critical. You scramble back empty-handed.",
+                    "The world bites back. Suit screaming.",
                     tuning.log_capacity,
                 );
             }
+            crate::landing::EncounterKind::Ruin => {
+                self.satchel_add(ResourceKind::Data, tuning.surface_ruin_data * depth_mult);
+                self.log.push(
+                    self.tick,
+                    "Wreckage of something that came before.",
+                    tuning.log_capacity,
+                );
+            }
+            crate::landing::EncounterKind::Life => {
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.pending_choice = true;
+                }
+                self.log.push(
+                    self.tick,
+                    "Something living. It has not noticed you yet.",
+                    tuning.log_capacity,
+                );
+                // Do NOT mark resolved yet — the choice (Task 6) resolves it.
+                return;
+            }
+            crate::landing::EncounterKind::Empty => {}
+        }
+        self.mark_resolved(system, site_idx, node);
+    }
+
+    fn satchel_add(&mut self, k: ResourceKind, amt: f64) {
+        if let Some(l) = self.expedition.landing.as_mut() {
+            let space = (self.ship.cargo - l.satchel_total()).max(0.0);
+            let take = amt.min(space);
+            if take > 0.0 {
+                *l.satchel.entry(k).or_insert(0.0) += take;
+            }
+        }
+    }
+
+    fn mark_resolved(&mut self, system: SystemId, site_idx: usize, node: u32) {
+        if let Some(site) = self
+            .galaxy_state
+            .sites
+            .get_mut(&system.0)
+            .and_then(|v| v.get_mut(site_idx))
+        {
+            site.resolved_nodes.insert(node);
         }
     }
 
@@ -2160,6 +2291,14 @@ mod tests {
         );
     }
 
+    impl GameState {
+        #[cfg(test)]
+        fn surface_for_test(&self, world: &World) -> crate::landing::SurfaceSite {
+            let l = self.expedition.landing.as_ref().unwrap();
+            self.surface_site(world, l.system, l.site_idx, l.biome)
+        }
+    }
+
     /// Inject a Planet site at the current location and return its index.
     fn plant_planet(s: &mut GameState, biome: crate::galaxy::Biome) -> usize {
         let loc = s.expedition.location.0;
@@ -2222,5 +2361,29 @@ mod tests {
             s.apply(&w, Action::ScanSystem(crate::galaxy::SystemId(2)))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn move_traverses_then_resolves_cache_into_satchel() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Frozen);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        // Find a reachable node from entry and move to it.
+        let site = s.surface_for_test(&w);
+        let target = site.nodes[0].edges[0];
+        assert!(s.apply(&w, Action::MoveToNode(target)).is_ok());
+        // Non-neighbor rejected.
+        assert!(s.apply(&w, Action::MoveToNode(999)).is_err());
+        s.advance(&w, t.traverse_ticks as u64);
+        assert_eq!(s.expedition.landing.as_ref().unwrap().node, target);
+        // Node is now resolved (recorded in overlay).
+        let resolved = s.galaxy_state.sites.get(&1).unwrap()[idx]
+            .resolved_nodes
+            .contains(&target);
+        assert!(resolved);
     }
 }
