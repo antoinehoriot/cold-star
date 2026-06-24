@@ -2475,17 +2475,19 @@ mod tests {
             crate::codex::NoteId::FirstLanding
         )));
         // Drive the landing onto a Life node, then harvest.
-        if let Some(node) = s.find_life_node_for_test(&w) {
-            s.walk_to_for_test(&w, node); // helper: set node + resolve
-            assert!(s.expedition.landing.as_ref().unwrap().pending_choice);
-            let before = s.expedition.landing.as_ref().unwrap().satchel_total();
-            s.apply(&w, Action::HarvestLife).unwrap();
-            assert!(s.expedition.landing.as_ref().unwrap().satchel_total() > before);
-            assert!(!s.expedition.landing.as_ref().unwrap().pending_choice);
-            assert!(s.codex.has(crate::codex::DiscoveryId::Note(
-                crate::codex::NoteId::FirstLifeTaken
-            )));
-        }
+        // Seed 1 + SystemId(1)/site_idx=0 + Verdant is verified to contain a Life node.
+        let node = s
+            .find_life_node_for_test(&w)
+            .expect("verdant surface (seed 1, system 1, site 0) must contain a life node");
+        s.walk_to_for_test(&w, node); // helper: set node + resolve
+        assert!(s.expedition.landing.as_ref().unwrap().pending_choice);
+        let before = s.expedition.landing.as_ref().unwrap().satchel_total();
+        s.apply(&w, Action::HarvestLife).unwrap();
+        assert!(s.expedition.landing.as_ref().unwrap().satchel_total() > before);
+        assert!(!s.expedition.landing.as_ref().unwrap().pending_choice);
+        assert!(s.codex.has(crate::codex::DiscoveryId::Note(
+            crate::codex::NoteId::FirstLifeTaken
+        )));
     }
 
     #[test]
