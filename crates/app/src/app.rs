@@ -116,6 +116,9 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .sys-reachable { fill: #6fb7d6; }
 .sys-far { fill: #3a4a55; }
 .sys-selected { stroke: #d8e6ef; stroke-width: 1.2; }
+.sys-home { fill: #e8d28a; stroke: #d6c46f; stroke-width: 1; }
+.sys-home-ring { fill: none; stroke: #d6c46f; stroke-width: .6; opacity: .55; }
+.sys-home-label { fill: #d6c46f; font-size: 6px; letter-spacing: .12em; }
 .star-Neutron { }
 .star-Dead { }
 .navmap circle.sys:hover { stroke: #9fd0e6; stroke-width: 1.2; }
@@ -435,24 +438,40 @@ fn NavigationPanel(
                 for row in rows.clone() {
                     {
                         let id = row.id;
+                        let is_home = row.id.0 == 0;
                         let dot_class = {
                             let mut c = format!("sys star-{}", row.star);
                             if row.is_current { c.push_str(" sys-current"); }
                             else if row.reachable { c.push_str(" sys-reachable"); }
                             else { c.push_str(" sys-far"); }
+                            if is_home { c.push_str(" sys-home"); }
                             if sel == row.id { c.push_str(" sys-selected"); }
                             c
                         };
-                        let r_val = if row.is_current { "4.5" } else { "3.2" };
+                        let r_val = if is_home { "5.5" } else if row.is_current { "4.5" } else { "3.2" };
                         let cx_val = format!("{}", row.pos.0 - center.0);
                         let cy_val = format!("{}", row.pos.1 - center.1);
+                        let label_y = format!("{}", row.pos.1 - center.1 + 13.0);
                         rsx! {
+                            // The home station gets a halo + label so it always reads as "home".
+                            if is_home {
+                                circle { cx: "{cx_val}", cy: "{cy_val}", r: "9", class: "sys-home-ring" }
+                            }
                             circle {
                                 cx: "{cx_val}",
                                 cy: "{cy_val}",
                                 r: "{r_val}",
                                 class: "{dot_class}",
                                 onclick: move |_| selected.set(id),
+                            }
+                            if is_home {
+                                text {
+                                    x: "{cx_val}",
+                                    y: "{label_y}",
+                                    text_anchor: "middle",
+                                    class: "sys-home-label",
+                                    "HOME"
+                                }
                             }
                         }
                     }
