@@ -95,15 +95,36 @@ pub fn jump_cost(dist: f64, t: &Tuning) -> f64 {
 const SITE_SALT: u32 = 0x5176; // mixes sys_id into an independent site stream
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Biome {
+    Frozen,
+    Toxic,
+    Verdant,
+    Ruined,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SiteKind {
     AsteroidField,
     Derelict,
+    Planet(Biome),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Site {
     pub kind: SiteKind,
     pub depleted: bool,
+    #[serde(default)]
+    pub resolved_nodes: std::collections::BTreeSet<u32>,
+}
+
+impl Site {
+    pub fn new(kind: SiteKind) -> Self {
+        Self {
+            kind,
+            depleted: false,
+            resolved_nodes: std::collections::BTreeSet::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -116,7 +137,7 @@ pub struct GalaxyState {
 /// Generate a system's sites once (deterministic). 0–2 sites, weighted by star
 /// type: neutron skews asteroid (Isotopes), dead skews derelict, dwarf/main
 /// may surface nothing (the honest dark).
-pub fn materialize_sites(world_seed: u64, sys_id: u32, star: StarType, _t: &Tuning) -> Vec<Site> {
+pub fn materialize_sites(world_seed: u64, sys_id: u32, star: StarType, t: &Tuning) -> Vec<Site> {
     let mut rng = Rng::new(hash(world_seed, sys_id ^ SITE_SALT));
     // Per star type: (p_asteroid, p_derelict) chance for each of two site rolls.
     let (p_ast, p_der) = match star {
@@ -125,19 +146,25 @@ pub fn materialize_sites(world_seed: u64, sys_id: u32, star: StarType, _t: &Tuni
         StarType::MainSequence => (0.4, 0.3),
         StarType::Dwarf => (0.3, 0.25),
     };
+    let p_planet = t.planet_site_weight; // planets layer on top of the asteroid/derelict bands
     let mut sites = Vec::new();
     for _ in 0..2 {
         let roll = rng.next_f64();
         if roll < p_ast {
-            sites.push(Site {
-                kind: SiteKind::AsteroidField,
-                depleted: false,
-            });
+            sites.push(Site::new(SiteKind::AsteroidField));
         } else if roll < p_ast + p_der {
-            sites.push(Site {
-                kind: SiteKind::Derelict,
-                depleted: false,
-            });
+            sites.push(Site::new(SiteKind::Derelict));
+        }
+        // Independent planet roll on a separate draw so adding planets doesn't
+        // shift the asteroid/derelict distribution.
+        if rng.next_f64() < p_planet {
+            let biome = match (rng.next_f64() * 4.0) as u32 {
+                0 => Biome::Frozen,
+                1 => Biome::Toxic,
+                2 => Biome::Verdant,
+                _ => Biome::Ruined,
+            };
+            sites.push(Site::new(SiteKind::Planet(biome)));
         }
     }
     sites
@@ -213,7 +240,8 @@ mod tests {
         let a = materialize_sites(42, 3, StarType::Neutron, &t);
         let b = materialize_sites(42, 3, StarType::Neutron, &t);
         assert_eq!(a, b);
-        assert!(a.len() <= 2);
+        // Up to 2 asteroid/derelict + up to 2 planet overlays = max 4.
+        assert!(a.len() <= 4);
         assert!(a.iter().all(|s| !s.depleted));
     }
 
@@ -233,6 +261,18 @@ mod tests {
             neutron_ast > dead_ast,
             "neutron={neutron_ast} dead={dead_ast}"
         );
+    }
+
+    #[test]
+    fn planets_materialize_with_a_biome_and_carry_resolved_nodes() {
+        let t = Tuning::default();
+        // Over many systems, at least one Planet appears, each with a Copy Biome.
+        let planets: Vec<_> = (0..400u32)
+            .flat_map(|id| materialize_sites(1, id, StarType::MainSequence, &t))
+            .filter(|s| matches!(s.kind, SiteKind::Planet(_)))
+            .collect();
+        assert!(!planets.is_empty(), "planets should materialize");
+        assert!(planets.iter().all(|s| s.resolved_nodes.is_empty()));
     }
 
     #[test]

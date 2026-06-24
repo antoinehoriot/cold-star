@@ -30,7 +30,7 @@ pub use crew::Crew;
 pub use economy::{EconomyReport, job_ready, run_economy};
 pub use expedition::{Activity, Expedition};
 pub use flags::Flag;
-pub use galaxy::{Galaxy, GalaxyState, Site, SiteKind, StarType, System, SystemId};
+pub use galaxy::{Biome, Galaxy, GalaxyState, Site, SiteKind, StarType, System, SystemId};
 pub use job::{Job, JobId, JobRegistry, Recipe};
 pub use log::{Log, LogEntry};
 pub use module::{Module, ModuleId, ModuleRegistry, ModuleUnlocks};

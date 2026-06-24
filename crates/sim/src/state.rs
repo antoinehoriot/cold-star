@@ -11,7 +11,7 @@ use crate::expedition::Activity;
 use crate::expedition::Expedition;
 use crate::flags::Flag;
 use crate::galaxy::{
-    Galaxy, GalaxyState, HOME, distance, jump_cost, materialize_sites, reveal_from,
+    Galaxy, GalaxyState, HOME, SiteKind, distance, jump_cost, materialize_sites, reveal_from,
 };
 use crate::job::{JobId, JobRegistry};
 use crate::log::Log;
@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Cumulative scrap salvaged that triggers the heavy-consumption uneasy note.
 const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
 
-pub const SAVE_VERSION: u32 = 6;
+pub const SAVE_VERSION: u32 = 7;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
 /// not part of the saved state).
@@ -681,6 +681,15 @@ impl GameState {
                     Some(_) => return Err(Rejected("that site is stripped")),
                     None => return Err(Rejected("no such site")),
                 }
+                if let Some(SiteKind::Planet(_)) = self
+                    .galaxy_state
+                    .sites
+                    .get(&system.0)
+                    .and_then(|v| v.get(idx))
+                    .map(|s| s.kind)
+                {
+                    return Err(Rejected("you must land on a planet, not strip it"));
+                }
                 self.expedition.activity = Some(Activity::ResolveSite {
                     system,
                     site_idx: idx,
@@ -838,6 +847,7 @@ impl GameState {
                             ),
                             (ResourceKind::Data, tuning.site_derelict_data * grad),
                         ],
+                        crate::galaxy::SiteKind::Planet(_) => vec![],
                     };
                     for (k, amt) in yields {
                         let space = (self.ship.cargo - self.expedition.cargo_total()).max(0.0);
@@ -1257,10 +1267,10 @@ mod tests {
     }
 
     #[test]
-    fn new_game_is_versioned_v6() {
+    fn new_game_is_versioned_v7() {
         let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
         let s = GameState::new(&world(&t, &j, &m, &tc), 1);
-        assert_eq!(s.version, 6);
+        assert_eq!(s.version, 7);
         assert_eq!(s.resources.cap, t.resource_base_cap);
     }
 
@@ -1924,10 +1934,9 @@ mod tests {
         // Inject a known asteroid site at home (test-only) and resolve it in place.
         s.galaxy_state.sites.insert(
             0,
-            vec![crate::galaxy::Site {
-                kind: crate::galaxy::SiteKind::AsteroidField,
-                depleted: false,
-            }],
+            vec![crate::galaxy::Site::new(
+                crate::galaxy::SiteKind::AsteroidField,
+            )],
         );
         s.apply(&w, Action::ResolveSite(crate::galaxy::HOME, 0))
             .unwrap();
@@ -1949,10 +1958,7 @@ mod tests {
         let mut s = GameState::new(&w, 1);
         s.galaxy_state.sites.insert(
             0,
-            vec![crate::galaxy::Site {
-                kind: crate::galaxy::SiteKind::Derelict,
-                depleted: false,
-            }],
+            vec![crate::galaxy::Site::new(crate::galaxy::SiteKind::Derelict)],
         );
         s.apply(&w, Action::ResolveSite(crate::galaxy::HOME, 0))
             .unwrap();
