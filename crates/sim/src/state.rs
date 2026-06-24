@@ -1023,11 +1023,14 @@ impl GameState {
                             *self.expedition.cargo.entry(k).or_insert(0.0) += take;
                         }
                     }
-                    if let Some(site) = self
-                        .galaxy_state
-                        .sites
-                        .get_mut(&system.0)
-                        .and_then(|v| v.get_mut(site_idx))
+                    // A Planet is landed on, never quick-resolved — defensively
+                    // refuse to mark it depleted even if this arm is somehow reached.
+                    if !matches!(kind, crate::galaxy::SiteKind::Planet(_))
+                        && let Some(site) = self
+                            .galaxy_state
+                            .sites
+                            .get_mut(&system.0)
+                            .and_then(|v| v.get_mut(site_idx))
                     {
                         site.depleted = true;
                     }

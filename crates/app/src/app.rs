@@ -1174,24 +1174,27 @@ fn Console(
             }
         }
 
-        // Core action buttons — always rendered regardless of economy state.
-        if is_cold {
-            button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
-        } else {
-            if salvage_unlocked {
-                button {
-                    class: "act",
-                    disabled: salvage_cooldown > 0,
-                    onclick: move |_| act(Action::Salvage),
-                    if salvage_cooldown > 0 { "Salvage ({salvage_cooldown}s)" } else { "Salvage" }
+        // Core action buttons — always rendered, but dimmed/disabled while away
+        // (they manage the station, which the engine refuses while exploring).
+        div { class: if away { "dimmed" } else { "" },
+            if is_cold {
+                button { class: "act", onclick: move |_| act(Action::Ignite), "Ignite the core" }
+            } else {
+                if salvage_unlocked {
+                    button {
+                        class: "act",
+                        disabled: salvage_cooldown > 0,
+                        onclick: move |_| act(Action::Salvage),
+                        if salvage_cooldown > 0 { "Salvage ({salvage_cooldown}s)" } else { "Salvage" }
+                    }
+                    button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
                 }
-                button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
-            }
-            if source_available && !source_active {
-                button {
-                    class: "act",
-                    onclick: move |_| act(Action::ActivateCrewSource),
-                    "Activate {source_name}"
+                if source_available && !source_active {
+                    button {
+                        class: "act",
+                        onclick: move |_| act(Action::ActivateCrewSource),
+                        "Activate {source_name}"
+                    }
                 }
             }
         }

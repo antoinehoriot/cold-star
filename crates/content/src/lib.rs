@@ -537,6 +537,7 @@ mod tests {
                 "crew_arrived",
                 "failing",
                 "cold",
+                "shipyard_complete",
             ] {
                 assert!(!o.flavor(key).is_empty(), "{:?} missing flavor {key}", o.id);
             }
