@@ -103,6 +103,21 @@ pub struct Tuning {
     // M4 — scavenge (soft stranded recovery)
     pub scavenge_ticks: u32,
     pub scavenge_fuel: f64,
+
+    // M5 — worlds & surface
+    pub planet_site_weight: f64, // extra weighted chance a site roll yields a Planet
+    pub suit_max: f64,
+    pub suit_drain_per_tick: f64,
+    pub suit_hazard_damage: f64,
+    pub traverse_ticks: u32,
+    pub surface_depth_max: u32,  // deepest layer index (entry = 0)
+    pub surface_layer_min: u32,  // min nodes per non-entry layer
+    pub surface_layer_max: u32,  // max nodes per non-entry layer
+    pub surface_cache_base: f64, // base ResourceCache yield (scaled by depth)
+    pub surface_ruin_data: f64,
+    pub surface_life_harvest: f64,
+    pub surface_life_leave_data: f64,
+    pub surface_depth_reward: f64, // per-depth multiplier added to yields
 }
 
 impl Default for Tuning {
@@ -160,6 +175,19 @@ impl Default for Tuning {
             drive_upgrade_step: 15.0,
             scavenge_ticks: 20,
             scavenge_fuel: 6.0,
+            planet_site_weight: 0.5,
+            suit_max: 100.0,
+            suit_drain_per_tick: 0.6,
+            suit_hazard_damage: 18.0,
+            traverse_ticks: 4,
+            surface_depth_max: 3,
+            surface_layer_min: 1,
+            surface_layer_max: 3,
+            surface_cache_base: 14.0,
+            surface_ruin_data: 10.0,
+            surface_life_harvest: 22.0,
+            surface_life_leave_data: 6.0,
+            surface_depth_reward: 0.6,
         }
     }
 }

@@ -178,6 +178,32 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     {
         return Err(ContentError::Invalid("star weights must sum to > 0".into()));
     }
+    for (name, v) in [
+        ("planet_site_weight", t.planet_site_weight),
+        ("suit_max", t.suit_max),
+        ("suit_drain_per_tick", t.suit_drain_per_tick),
+        ("suit_hazard_damage", t.suit_hazard_damage),
+        ("surface_cache_base", t.surface_cache_base),
+        ("surface_ruin_data", t.surface_ruin_data),
+        ("surface_life_harvest", t.surface_life_harvest),
+        ("surface_life_leave_data", t.surface_life_leave_data),
+        ("surface_depth_reward", t.surface_depth_reward),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
+    if t.suit_max <= 0.0 {
+        return Err(ContentError::Invalid("suit_max must be > 0".into()));
+    }
+    if t.traverse_ticks < 1 {
+        return Err(ContentError::Invalid("traverse_ticks must be >= 1".into()));
+    }
+    if t.surface_layer_min < 1 || t.surface_layer_max < t.surface_layer_min {
+        return Err(ContentError::Invalid(
+            "surface_layer_max must be >= surface_layer_min >= 1".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -582,5 +608,19 @@ mod tests {
         assert_eq!(t.drive_upgrade_isotopes, 10.0);
         assert_eq!(t.drive_upgrade_step, 15.0);
         assert_eq!(t.scavenge_fuel, 6.0);
+    }
+
+    #[test]
+    fn loads_m5_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.suit_max, 100.0);
+        assert_eq!(t.suit_drain_per_tick, 0.6);
+        assert_eq!(t.suit_hazard_damage, 18.0);
+        assert_eq!(t.traverse_ticks, 4);
+        assert_eq!(t.surface_depth_max, 3);
+        assert_eq!(t.surface_cache_base, 14.0);
+        assert_eq!(t.surface_ruin_data, 10.0);
+        assert_eq!(t.surface_life_harvest, 22.0);
+        assert_eq!(t.planet_site_weight, 0.5);
     }
 }
