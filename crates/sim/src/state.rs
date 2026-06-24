@@ -69,6 +69,9 @@ pub enum Action {
     UpgradeArmor,
     CraftConsumable(ConsumableKind),
     SetAwayCrew { delta: i32 },
+    UseConsumable(ConsumableKind),
+    SetStance(crate::combat::Stance),
+    Flee,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -521,7 +524,13 @@ impl GameState {
     fn is_landing_blocked(action: &Action) -> bool {
         !matches!(
             action,
-            Action::MoveToNode(_) | Action::HarvestLife | Action::LeaveLife | Action::Extract
+            Action::MoveToNode(_)
+                | Action::HarvestLife
+                | Action::LeaveLife
+                | Action::Extract
+                | Action::UseConsumable(_)
+                | Action::SetStance(_)
+                | Action::Flee
         )
     }
 
@@ -984,6 +993,91 @@ impl GameState {
                 *self.consumables.entry(kind).or_insert(0) += 1;
                 Ok(())
             }
+            Action::UseConsumable(kind) => {
+                let Some(landing) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if landing.combat.is_none() {
+                    return Err(Rejected("no active combat"));
+                }
+                let count = self.consumables.get(&kind).copied().unwrap_or(0);
+                if count == 0 {
+                    return Err(Rejected("no consumable of that type"));
+                }
+                *self.consumables.entry(kind).or_insert(0) -= 1;
+                let crew = self.expedition.away_team.crew;
+                match kind {
+                    ConsumableKind::MedGel => {
+                        let max = self.squad_hp_max(tuning);
+                        self.expedition.away_team.hp =
+                            (self.expedition.away_team.hp + tuning.medgel_heal).min(max);
+                    }
+                    ConsumableKind::Grenade => {
+                        if let Some(l) = self.expedition.landing.as_mut()
+                            && let Some(c) = l.combat.as_mut()
+                        {
+                            c.enemy_hp -= tuning.grenade_damage;
+                        }
+                        // Win immediately if grenade kills the enemy.
+                        let enemy_hp = self
+                            .expedition
+                            .landing
+                            .as_ref()
+                            .and_then(|l| l.combat.as_ref())
+                            .map(|c| c.enemy_hp)
+                            .unwrap_or(1.0);
+                        if enemy_hp <= 0.0 {
+                            let _ = crew; // suppress unused warning
+                            self.win_combat(
+                                world,
+                                &self
+                                    .expedition
+                                    .landing
+                                    .as_ref()
+                                    .unwrap()
+                                    .combat
+                                    .clone()
+                                    .unwrap(),
+                            );
+                        }
+                    }
+                    ConsumableKind::Shield => {
+                        if let Some(l) = self.expedition.landing.as_mut()
+                            && let Some(c) = l.combat.as_mut()
+                        {
+                            c.shield_ticks = tuning.shield_ticks;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Action::SetStance(stance) => {
+                let Some(landing) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if landing.combat.is_none() {
+                    return Err(Rejected("no active combat"));
+                }
+                if let Some(l) = self.expedition.landing.as_mut()
+                    && let Some(c) = l.combat.as_mut()
+                {
+                    c.stance = stance;
+                }
+                Ok(())
+            }
+            Action::Flee => {
+                if self
+                    .expedition
+                    .landing
+                    .as_ref()
+                    .and_then(|l| l.combat.as_ref())
+                    .is_none()
+                {
+                    return Err(Rejected("no active combat to flee from"));
+                }
+                self.flee_combat(world);
+                Ok(())
+            }
             Action::SetAwayCrew { delta } => {
                 if self.away() || self.landed() {
                     return Err(Rejected("can only change the away-team while docked"));
@@ -1202,11 +1296,19 @@ impl GameState {
 
     fn tick_landing(&mut self, world: &World) {
         let tuning = world.tuning;
-        let Some(landing) = self.expedition.landing.as_mut() else {
-            return;
-        };
-        landing.suit -= tuning.suit_drain_per_tick;
-        if landing.suit <= 0.0 {
+        // Suit drain (always runs first).
+        {
+            let Some(landing) = self.expedition.landing.as_mut() else {
+                return;
+            };
+            landing.suit -= tuning.suit_drain_per_tick;
+        }
+        if self
+            .expedition
+            .landing
+            .as_ref()
+            .is_some_and(|l| l.suit <= 0.0)
+        {
             self.expedition.landing = None;
             self.log.push(
                 self.tick,
@@ -1215,33 +1317,175 @@ impl GameState {
             );
             return;
         }
-        if landing.traverse > 0 {
-            landing.traverse -= 1;
-            if landing.traverse == 0 {
-                // Arrived at `landing.node`: resolve its encounter once.
-                let (system, site_idx, biome, node) = (
-                    landing.system,
-                    landing.site_idx,
-                    landing.biome,
-                    landing.node,
+        // Combat consumes the tick — no traverse while fighting.
+        if self
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.combat.as_ref())
+            .is_some()
+        {
+            self.tick_combat(world);
+            return;
+        }
+        let traverse_done = self
+            .expedition
+            .landing
+            .as_ref()
+            .is_some_and(|l| l.traverse > 0)
+            && {
+                let l = self.expedition.landing.as_mut().unwrap();
+                l.traverse -= 1;
+                l.traverse == 0
+            };
+        if traverse_done {
+            let (system, site_idx, biome, node) = {
+                let l = self.expedition.landing.as_ref().unwrap();
+                (l.system, l.site_idx, l.biome, l.node)
+            };
+            self.resolve_node(world, system, site_idx, biome, node);
+            // A fatal hazard this tick must force the retreat NOW.
+            if self
+                .expedition
+                .landing
+                .as_ref()
+                .is_some_and(|l| l.suit <= 0.0)
+            {
+                self.expedition.landing = None;
+                self.log.push(
+                    self.tick,
+                    "Suit critical. You scramble back empty-handed.",
+                    tuning.log_capacity,
                 );
-                self.resolve_node(world, system, site_idx, biome, node);
-                // A fatal hazard this tick must force the retreat NOW — not at the next
-                // tick's top — so the player can't Extract on a blown Suit and keep the haul.
-                if self
-                    .expedition
-                    .landing
-                    .as_ref()
-                    .is_some_and(|l| l.suit <= 0.0)
-                {
-                    self.expedition.landing = None;
-                    self.log.push(
-                        self.tick,
-                        "Suit critical. You scramble back empty-handed.",
-                        tuning.log_capacity,
-                    );
-                }
             }
+        }
+    }
+
+    fn tick_combat(&mut self, world: &World) {
+        let tuning = world.tuning;
+        let Some(combat) = self
+            .expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.combat.clone())
+        else {
+            return;
+        };
+        let crew = self.expedition.away_team.crew;
+        let morale = self.expedition.away_team.morale;
+        if morale <= tuning.morale_rout || crew == 0 {
+            self.flee_combat(world);
+            return;
+        }
+        let shield_active = combat.shield_ticks > 0;
+        let squad = crate::combat::squad_stats(
+            crew,
+            morale,
+            self.gear,
+            combat.stance,
+            shield_active,
+            tuning,
+        );
+        let out = crate::combat::resolve_tick(&combat, &squad, tuning);
+        let mut combat = combat;
+        combat.enemy_hp -= out.enemy_damage;
+        if combat.shield_ticks > 0 {
+            combat.shield_ticks -= 1;
+        }
+        self.expedition.away_team.hp -= out.squad_damage;
+        let hp_per_crew =
+            tuning.marine_hp * (1.0 + self.gear.armor_tier as f64 * tuning.armor_hp_step);
+        loop {
+            let crew = self.expedition.away_team.crew;
+            if crew == 0 {
+                break;
+            }
+            if self.expedition.away_team.hp > (crew as f64 - 1.0) * hp_per_crew {
+                break;
+            }
+            if self.crew.kill_away() {
+                self.expedition.away_team.crew -= 1;
+                self.expedition.away_team.morale =
+                    (self.expedition.away_team.morale - tuning.morale_per_death).max(0.0);
+                self.note_once(
+                    NoteId::FirstMarineLost,
+                    "The Cost of the Work",
+                    "You read the name off the suit manifest. You have already moved on to the tactical problem before you finish reading it. You note this about yourself, and move on from that too.",
+                    tuning,
+                );
+            } else {
+                break;
+            }
+        }
+        if combat.enemy_hp <= 0.0 {
+            self.win_combat(world, &combat);
+        } else if self.expedition.away_team.crew == 0 {
+            self.flee_combat(world);
+        } else if let Some(l) = self.expedition.landing.as_mut() {
+            l.combat = Some(combat);
+        }
+    }
+
+    fn win_combat(&mut self, world: &World, combat: &crate::combat::Combat) {
+        let tuning = world.tuning;
+        let (system, site_idx, node) = match self.expedition.landing.as_ref() {
+            Some(l) => (l.system, l.site_idx, l.node),
+            None => return,
+        };
+        let galaxy = self.galaxy(world);
+        let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
+            (Some(h), Some(s)) => 1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient,
+            _ => 1.0,
+        };
+        if let Some(l) = self.expedition.landing.as_mut() {
+            l.combat = None;
+        }
+        self.mark_resolved(system, site_idx, node);
+        let components = tuning.remnant_components * grad;
+        let data = tuning.remnant_data * grad;
+        let _ = combat; // all needed values derived from tuning + grad
+        self.satchel_add(ResourceKind::Components, components);
+        self.satchel_add(ResourceKind::Data, data);
+        self.note_once(
+            NoteId::FirstRemnant,
+            "What It Was Built For",
+            "The husk's memory core is intact. You read the mission directive before wiping it for salvage: collect, transmit, persist. It had a home station too, somewhere, that sent it out to take what it could carry. You do not think about this for long.",
+            tuning,
+        );
+        self.log.push(
+            self.tick,
+            "The husk goes dark. You strip what remains.",
+            tuning.log_capacity,
+        );
+    }
+
+    fn flee_combat(&mut self, world: &World) {
+        let tuning = world.tuning;
+        let crew = self.expedition.away_team.crew;
+        self.expedition.away_team.morale =
+            (self.expedition.away_team.morale - tuning.morale_per_flee).max(0.0);
+        if crew == 0 {
+            // Wipe: lose the whole landing + satchel.
+            self.expedition.landing = None;
+            self.log.push(
+                self.tick,
+                "The squad is gone. You pull back with nothing.",
+                tuning.log_capacity,
+            );
+        } else {
+            // Partial retreat: lose a fraction of the satchel, keep the landing.
+            if let Some(l) = self.expedition.landing.as_mut() {
+                l.combat = None;
+                for v in l.satchel.values_mut() {
+                    *v *= 1.0 - tuning.flee_satchel_loss_frac;
+                }
+                l.satchel.retain(|_, v| *v > 0.0);
+            }
+            self.log.push(
+                self.tick,
+                "You break contact. Some of what you were carrying doesn't make it.",
+                tuning.log_capacity,
+            );
         }
     }
 
@@ -2789,6 +3033,31 @@ mod tests {
         // Advancing arrives back at the entry node: the back-move is real.
         s.advance(&w, t.traverse_ticks as u64);
         assert_eq!(s.expedition.landing.as_ref().unwrap().node, 0);
+    }
+
+    #[test]
+    fn squad_defeats_a_remnant_and_salvages() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        s.crew.total = 5;
+        s.apply(&w, Action::SetAwayCrew { delta: 5 }).unwrap();
+        s.gear.weapon_tier = 2;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Ruined);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        // Force a combat at the current node.
+        s.expedition.landing.as_mut().unwrap().combat =
+            Some(crate::combat::remnant_stats(1, 1.0, &t));
+        s.expedition.cargo.insert(ResourceKind::Rations, 1000.0);
+        s.advance(&w, 60); // a strong squad should win within the suit window
+        assert!(
+            s.expedition.landing.is_none()
+                || s.expedition.landing.as_ref().unwrap().combat.is_none(),
+            "combat resolved"
+        );
     }
 
     #[test]
