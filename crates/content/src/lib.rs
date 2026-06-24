@@ -175,7 +175,11 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             return Err(ContentError::Invalid(format!("{name} must be >= 1")));
         }
     }
-    if t.star_weight_dwarf + t.star_weight_mainseq + t.star_weight_neutron + t.star_weight_dead
+    if t.star_weight_dwarf
+        + t.star_weight_mainseq
+        + t.star_weight_neutron
+        + t.star_weight_dead
+        + t.star_weight_giant
         <= 0.0
     {
         return Err(ContentError::Invalid("star weights must sum to > 0".into()));
