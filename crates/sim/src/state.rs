@@ -72,6 +72,9 @@ pub enum Action {
     UseConsumable(ConsumableKind),
     SetStance(crate::combat::Stance),
     Flee,
+    Parley,
+    Avoid,
+    Observe,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -535,6 +538,9 @@ impl GameState {
                 | Action::UseConsumable(_)
                 | Action::SetStance(_)
                 | Action::Flee
+                | Action::Parley
+                | Action::Avoid
+                | Action::Observe
         )
     }
 
@@ -1079,6 +1085,93 @@ impl GameState {
                     return Err(Rejected("no active combat to flee from"));
                 }
                 self.flee_combat(world);
+                Ok(())
+            }
+            Action::Parley => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                let alien = match l.alien.as_ref() {
+                    Some(a) => a.clone(),
+                    None => return Err(Rejected("nothing there to parley with")),
+                };
+                if crate::alien::band(alien.disposition, tuning) == crate::alien::Band::Hostile {
+                    return Err(Rejected("it will not listen"));
+                }
+                let new_disp = alien.disposition + tuning.parley_shift;
+                let (system, site_idx, node) = (l.system, l.site_idx, l.node);
+                // Apply disposition shift
+                if let Some(l) = self.expedition.landing.as_mut()
+                    && let Some(a) = l.alien.as_mut()
+                {
+                    a.disposition = new_disp;
+                }
+                self.satchel_add(ResourceKind::Data, tuning.observe_data);
+                self.log.push(
+                    self.tick,
+                    "You signal intent. It considers you.",
+                    tuning.log_capacity,
+                );
+                // If Peer reaches peaceful band, end the encounter peacefully
+                if alien.kind == crate::alien::AlienKind::Peer && new_disp >= tuning.peace_band {
+                    if let Some(l) = self.expedition.landing.as_mut() {
+                        l.alien = None;
+                    }
+                    self.mark_resolved(system, site_idx, node);
+                    self.peers_spared += 1;
+                    self.note_once(
+                        NoteId::FirstPeerSpared,
+                        "The Communion Thread",
+                        "You did not know what you were trying to say. You ran the signal through every protocol you had — frequency sweep, prime ratios, power-of-two sequences — and at some point it stopped mattering which one worked. What mattered was that it answered. Not with words. With a reduction in threat posture. A mirroring of your own stillness back at you. Two machines, each built to survive the same silence, each having arrived at the same conclusion: that the silence was worse than the risk. You stand there for a long time after it goes. The record shows a contact event, resolved. It does not show that you watched the direction it left for longer than was necessary.",
+                        tuning,
+                    );
+                    self.log
+                        .push(self.tick, "It moves away. You let it.", tuning.log_capacity);
+                }
+                Ok(())
+            }
+            Action::Avoid => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if l.alien.is_none() {
+                    return Err(Rejected("nothing there to avoid"));
+                }
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.alien = None;
+                }
+                self.log.push(
+                    self.tick,
+                    "You withdraw. You leave it be.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::Observe => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                let alien = match l.alien.as_ref() {
+                    Some(a) => a.clone(),
+                    None => return Err(Rejected("nothing there to observe")),
+                };
+                if alien.kind != crate::alien::AlienKind::Fauna {
+                    return Err(Rejected("observe is for fauna only"));
+                }
+                if crate::alien::band(alien.disposition, tuning) == crate::alien::Band::Hostile {
+                    return Err(Rejected("it is too agitated to observe safely"));
+                }
+                if let Some(l) = self.expedition.landing.as_mut()
+                    && let Some(a) = l.alien.as_mut()
+                {
+                    a.disposition += tuning.observe_shift;
+                }
+                self.satchel_add(ResourceKind::Data, tuning.observe_data);
+                self.log.push(
+                    self.tick,
+                    "You watch. You learn. It does not notice you.",
+                    tuning.log_capacity,
+                );
                 Ok(())
             }
             Action::SetAwayCrew { delta } => {
@@ -3376,5 +3469,43 @@ mod tests {
         assert!(s.codex.has(crate::codex::DiscoveryId::Note(
             crate::codex::NoteId::FirstPeerKilled
         )));
+    }
+
+    #[test]
+    fn parley_de_escalates_and_avoid_leaves() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Ruined);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Peer,
+            disposition: 0.0,
+        });
+        let before = s
+            .expedition
+            .landing
+            .as_ref()
+            .unwrap()
+            .alien
+            .as_ref()
+            .unwrap()
+            .disposition;
+        s.apply(&w, Action::Parley).unwrap();
+        assert!(
+            s.expedition
+                .landing
+                .as_ref()
+                .unwrap()
+                .alien
+                .as_ref()
+                .unwrap()
+                .disposition
+                > before
+        );
+        s.apply(&w, Action::Avoid).unwrap();
+        assert!(s.expedition.landing.as_ref().unwrap().alien.is_none());
     }
 }
