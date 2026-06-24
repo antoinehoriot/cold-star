@@ -2,6 +2,7 @@
 //! the ship is engaged in. One activity at a time — the single expedition slot.
 
 use crate::galaxy::{HOME, SystemId};
+use crate::landing::Landing;
 use crate::resources::ResourceKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -31,6 +32,7 @@ pub struct Expedition {
     pub location: SystemId,
     pub activity: Option<Activity>,
     pub cargo: BTreeMap<ResourceKind, f64>,
+    pub landing: Option<Landing>,
 }
 
 impl Default for Expedition {
@@ -39,6 +41,7 @@ impl Default for Expedition {
             location: HOME,
             activity: None,
             cargo: BTreeMap::new(),
+            landing: None,
         }
     }
 }

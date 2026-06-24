@@ -33,7 +33,7 @@ pub use expedition::{Activity, Expedition};
 pub use flags::Flag;
 pub use galaxy::{Biome, Galaxy, GalaxyState, Site, SiteKind, StarType, System, SystemId};
 pub use job::{Job, JobId, JobRegistry, Recipe};
-pub use landing::{EncounterKind, SurfaceNode, SurfaceSite, surface_seed};
+pub use landing::{EncounterKind, Landing, SurfaceNode, SurfaceSite, surface_seed};
 pub use log::{Log, LogEntry};
 pub use module::{Module, ModuleId, ModuleRegistry, ModuleUnlocks};
 pub use origin::{Origin, OriginDef};

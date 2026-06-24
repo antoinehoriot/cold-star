@@ -3,8 +3,29 @@
 
 use crate::config::Tuning;
 use crate::galaxy::{Biome, SystemId};
+use crate::resources::ResourceKind;
 use crate::rng::{Rng, hash};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Run-state for a player currently on a planet surface.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Landing {
+    pub system: SystemId,
+    pub site_idx: usize,
+    pub biome: Biome,
+    pub node: u32,
+    pub suit: f64,
+    pub satchel: BTreeMap<ResourceKind, f64>,
+    pub pending_choice: bool,
+    pub traverse: u32,
+}
+
+impl Landing {
+    pub fn satchel_total(&self) -> f64 {
+        self.satchel.values().copied().sum()
+    }
+}
 
 const SURFACE_SALT: u64 = 0x5300_5300;
 

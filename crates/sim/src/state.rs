@@ -11,9 +11,11 @@ use crate::expedition::Activity;
 use crate::expedition::Expedition;
 use crate::flags::Flag;
 use crate::galaxy::{
-    Galaxy, GalaxyState, HOME, SiteKind, distance, jump_cost, materialize_sites, reveal_from,
+    Biome, Galaxy, GalaxyState, HOME, SiteKind, SystemId, distance, jump_cost, materialize_sites,
+    reveal_from,
 };
 use crate::job::{JobId, JobRegistry};
+use crate::landing::{Landing, SurfaceSite, surface_seed};
 use crate::log::Log;
 use crate::module::{ModuleId, ModuleRegistry};
 use crate::origin::{Origin, OriginDef, default_origin_def};
@@ -57,6 +59,11 @@ pub enum Action {
     ScanSystem(crate::galaxy::SystemId),
     ResolveSite(crate::galaxy::SystemId, usize),
     Scavenge,
+    Land(usize),
+    Extract,
+    MoveToNode(u32),
+    HarvestLife,
+    LeaveLife,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +172,26 @@ impl GameState {
                 self.expedition.activity,
                 Some(crate::expedition::Activity::Transit { .. })
             )
+    }
+
+    /// Landed = currently on a planet surface.
+    pub fn landed(&self) -> bool {
+        self.expedition.landing.is_some()
+    }
+
+    #[allow(dead_code)]
+    fn surface_site(
+        &self,
+        world: &World,
+        system: SystemId,
+        site_idx: usize,
+        biome: Biome,
+    ) -> SurfaceSite {
+        SurfaceSite::generate(
+            surface_seed(self.world_seed, system, site_idx),
+            biome,
+            world.tuning,
+        )
     }
 
     /// Stranded = away and cannot afford the cheapest jump to any revealed,
@@ -369,6 +396,9 @@ impl GameState {
             // --- expedition activity (jump/scan/resolve/scavenge timers) ---
             self.tick_expedition(world);
 
+            // --- surface landing (Suit drain + forced retreat) ---
+            self.tick_landing(world);
+
             // --- atmosphere failure: survival clock -> crew loss ---
             let atmosphere_failing = self.has_module(ModuleId::Atmosphere)
                 && self.crew.total > 0
@@ -465,7 +495,18 @@ impl GameState {
         )
     }
 
+    /// While landed, only the landing actions are allowed.
+    fn is_landing_blocked(action: &Action) -> bool {
+        !matches!(
+            action,
+            Action::MoveToNode(_) | Action::HarvestLife | Action::LeaveLife | Action::Extract
+        )
+    }
+
     pub fn apply(&mut self, world: &World, action: Action) -> Result<(), Rejected> {
+        if self.landed() && Self::is_landing_blocked(&action) {
+            return Err(Rejected("you are on the surface"));
+        }
         if self.away() && Self::is_station_management(&action) {
             return Err(Rejected("you are away from the station"));
         }
@@ -738,6 +779,62 @@ impl GameState {
                 });
                 Ok(())
             }
+            Action::Land(idx) => {
+                if !self.ship.built {
+                    return Err(Rejected("no ship to land with"));
+                }
+                if self.expedition.activity.is_some() || self.landed() {
+                    return Err(Rejected("the ship is already busy"));
+                }
+                let loc = self.expedition.location;
+                let Some(SiteKind::Planet(biome)) = self
+                    .galaxy_state
+                    .sites
+                    .get(&loc.0)
+                    .and_then(|v| v.get(idx))
+                    .map(|s| s.kind)
+                else {
+                    return Err(Rejected("that site is not a planet"));
+                };
+                self.expedition.landing = Some(Landing {
+                    system: loc,
+                    site_idx: idx,
+                    biome,
+                    node: 0,
+                    suit: tuning.suit_max,
+                    satchel: std::collections::BTreeMap::new(),
+                    pending_choice: false,
+                    traverse: 0,
+                });
+                self.log.push(
+                    self.tick,
+                    "Dropship down. Your boots find a world.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::Extract => {
+                let Some(landing) = self.expedition.landing.take() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                for (k, amt) in landing.satchel {
+                    let space = (self.ship.cargo - self.expedition.cargo_total()).max(0.0);
+                    let take = amt.min(space);
+                    if take > 0.0 {
+                        *self.expedition.cargo.entry(k).or_insert(0.0) += take;
+                    }
+                }
+                self.log.push(
+                    self.tick,
+                    "You burn back to orbit with what you could carry.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            // Temporary stubs — replaced in Tasks 5 and 6.
+            Action::MoveToNode(_) | Action::HarvestLife | Action::LeaveLife => {
+                Err(Rejected("not yet on the surface"))
+            }
         }
     }
 
@@ -879,6 +976,23 @@ impl GameState {
                 self.log.push(
                     self.tick,
                     "You bleed fuel from cold tanks and wreckage. Enough to limp on.",
+                    tuning.log_capacity,
+                );
+            }
+        }
+    }
+
+    /// Drain Suit while landed; on Suit failure, force a retreat and lose the
+    /// satchel. (Traverse + encounter resolution land in Task 5.)
+    fn tick_landing(&mut self, world: &World) {
+        let tuning = world.tuning;
+        if let Some(landing) = self.expedition.landing.as_mut() {
+            landing.suit -= tuning.suit_drain_per_tick;
+            if landing.suit <= 0.0 {
+                self.expedition.landing = None;
+                self.log.push(
+                    self.tick,
+                    "Suit critical. You scramble back empty-handed.",
                     tuning.log_capacity,
                 );
             }
@@ -2043,6 +2157,70 @@ mod tests {
         assert_eq!(
             s.apply(&w, Action::Scavenge),
             Err(Rejected("no need to scavenge"))
+        );
+    }
+
+    /// Inject a Planet site at the current location and return its index.
+    fn plant_planet(s: &mut GameState, biome: crate::galaxy::Biome) -> usize {
+        let loc = s.expedition.location.0;
+        let v = s.galaxy_state.sites.entry(loc).or_default();
+        v.push(crate::galaxy::Site::new(crate::galaxy::SiteKind::Planet(
+            biome,
+        )));
+        v.len() - 1
+    }
+
+    #[test]
+    fn land_then_extract_banks_nothing_when_satchel_empty() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        // Move the player to a non-home system so they're "away".
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Frozen);
+        assert!(s.apply(&w, Action::Land(idx)).is_ok());
+        assert!(s.landed());
+        assert_eq!(s.expedition.landing.as_ref().unwrap().suit, t.suit_max);
+        assert!(s.apply(&w, Action::Extract).is_ok());
+        assert!(!s.landed());
+    }
+
+    #[test]
+    fn suit_drains_and_zero_forces_retreat_losing_satchel() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Toxic);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        // Put something in the satchel to prove it's lost on retreat.
+        s.expedition
+            .landing
+            .as_mut()
+            .unwrap()
+            .satchel
+            .insert(ResourceKind::Data, 9.0);
+        let ticks = (t.suit_max / t.suit_drain_per_tick).ceil() as u64 + 1;
+        s.advance(&w, ticks);
+        assert!(!s.landed(), "suit ran out -> forced retreat");
+        assert!(s.expedition.cargo.is_empty(), "satchel lost, not banked");
+    }
+
+    #[test]
+    fn station_and_jump_actions_locked_while_landed() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Ruined);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        assert!(s.apply(&w, Action::Jump(crate::galaxy::HOME)).is_err());
+        assert!(
+            s.apply(&w, Action::ScanSystem(crate::galaxy::SystemId(2)))
+                .is_err()
         );
     }
 }
