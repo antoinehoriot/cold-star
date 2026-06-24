@@ -152,8 +152,9 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .bar-suit > span { background: #6fd6a0; }
 .surf-here { font-size: .85rem; color: #c7d3dd; margin: .3rem 0; }
 .surf-choice { border-left: 2px solid #5a4a26; padding-left: .6rem; margin: .4rem 0; }
-.surfmap { width: 100%; height: 180px; display: block; margin: .4rem 0;
+.surfmap-scroll { width: 100%; max-height: 300px; overflow: auto; margin: .4rem 0;
   background: radial-gradient(circle at 50% 50%, #0a1810 0%, #070b08 70%); border: 1px solid #1d4a30; border-radius: 5px; }
+.surfmap { display: block; }
 .surf-edge { stroke: #234; stroke-width: .6; }
 .surf-node { cursor: pointer; stroke: #05070a; stroke-width: .6; }
 .surf-current { fill: #6fd6a0; }
@@ -575,6 +576,10 @@ fn SurfaceView(
     let busy = vm.traverse > 0;
 
     // Layout nodes by depth (x) and band position (y).
+    // Pixel-space layout: 70px per depth step (x), 46px per slot (y), 30px margin.
+    const PX_X: f64 = 70.0;
+    const PX_Y: f64 = 46.0;
+    const MARGIN: f64 = 30.0;
     let max_depth = vm.nodes.iter().map(|n| n.depth).max().unwrap_or(0).max(1);
     let mut by_depth: std::collections::BTreeMap<u32, Vec<&SurfaceNodeVM>> = Default::default();
     for n in &vm.nodes {
@@ -588,14 +593,19 @@ fn SurfaceView(
             band.iter()
                 .enumerate()
                 .map(move |(i, node)| {
-                    let x = 10.0 + (*d as f64) * (80.0 / max_depth as f64);
-                    let y = 10.0 + (i as f64 + 0.5) * (80.0 / n as f64);
+                    let x = MARGIN + (*d as f64) * PX_X;
+                    let y = MARGIN
+                        + (i as f64 + 0.5 - n as f64 / 2.0) * PX_Y
+                        + (max_band as f64 / 2.0) * PX_Y;
                     ((*node).clone(), x, y)
                 })
                 .collect::<Vec<_>>()
         })
         .collect();
-    let view = format!("0 0 100 {}", 20.0 + max_band as f64 * 10.0);
+    // SVG content size derived from the actual node extent.
+    let svg_w = (MARGIN + max_depth as f64 * PX_X + MARGIN).max(120.0);
+    let svg_h = (MARGIN + max_band as f64 * PX_Y + MARGIN).max(80.0);
+    let view = format!("0 0 {svg_w} {svg_h}");
 
     // Current node's edge set — determines which nodes are clickable to Move.
     let cur_edges: Vec<u32> = vm
@@ -628,11 +638,13 @@ fn SurfaceView(
                     button { class: "act", onclick: move |_| on_leave.call(()), "Leave it" }
                 }
             } else {
-                // SVG node-graph map replacing the text DESCEND list.
+                // SVG node-graph map — scrollable, pixel-sized to content.
+                div { class: "surfmap-scroll",
                 svg {
                     class: "surfmap",
                     view_box: "{view}",
-                    preserve_aspect_ratio: "xMidYMid meet",
+                    width: "{svg_w}",
+                    height: "{svg_h}",
                     // Edges — draw between placed nodes that share an edge.
                     for (node, x1v, y1v) in placed.clone() {
                         for eid in node.edges.clone() {
@@ -685,6 +697,7 @@ fn SurfaceView(
                         }
                     }
                 }
+                } // end surfmap-scroll div
                 if cur_edges.is_empty() {
                     div { class: "muted", "Nowhere deeper. Extract." }
                 }
