@@ -414,6 +414,9 @@ impl GameState {
             // --- surface landing (Suit drain + forced retreat) ---
             self.tick_landing(world);
 
+            // --- away-team rations consumption + starvation ---
+            self.tick_away_team(world);
+
             // --- atmosphere failure: survival clock -> crew loss ---
             let atmosphere_failing = self.has_module(ModuleId::Atmosphere)
                 && self.crew.total > 0
@@ -507,6 +510,10 @@ impl GameState {
                 | Action::SetPriority { .. }
                 | Action::StartResearch(_)
                 | Action::UpgradeDrive
+                | Action::SetAwayCrew { .. }
+                | Action::UpgradeWeapon
+                | Action::UpgradeArmor
+                | Action::CraftConsumable(_)
         )
     }
 
@@ -1153,6 +1160,41 @@ impl GameState {
                     "You bleed fuel from cold tanks and wreckage. Enough to limp on.",
                     tuning.log_capacity,
                 );
+            }
+        }
+    }
+
+    /// While away with a committed squad: eat ship Rations; if out, starve
+    /// (morale + HP attrition, then a casualty). Deterministic per tick.
+    fn tick_away_team(&mut self, world: &World) {
+        let tuning = world.tuning;
+        if self.expedition.away_team.crew == 0 || !self.away() {
+            return;
+        }
+        let need = self.expedition.away_team.crew as f64 * tuning.marine_ration_upkeep;
+        let have = self
+            .expedition
+            .cargo
+            .get(&ResourceKind::Rations)
+            .copied()
+            .unwrap_or(0.0);
+        if have >= need {
+            *self
+                .expedition
+                .cargo
+                .entry(ResourceKind::Rations)
+                .or_insert(0.0) -= need;
+        } else {
+            self.expedition.cargo.remove(&ResourceKind::Rations);
+            // Starvation.
+            self.expedition.away_team.morale =
+                (self.expedition.away_team.morale - tuning.morale_per_starve_tick).max(0.0);
+            self.expedition.away_team.hp -= tuning.starve_hp_per_tick;
+            if self.expedition.away_team.hp <= 0.0 && self.crew.kill_away() {
+                self.expedition.away_team.crew = self.expedition.away_team.crew.saturating_sub(1);
+                self.expedition.away_team.morale =
+                    (self.expedition.away_team.morale - tuning.morale_per_death).max(0.0);
+                self.expedition.away_team.hp = self.squad_hp_max(tuning);
             }
         }
     }
@@ -2762,6 +2804,36 @@ mod tests {
                 .copied()
                 .unwrap_or(0),
             1
+        );
+    }
+
+    #[test]
+    fn away_team_eats_ship_rations_then_starves() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.crew.total = 3;
+        s.apply(&w, Action::SetAwayCrew { delta: 3 }).unwrap();
+        s.expedition.location = crate::galaxy::SystemId(1); // away
+        s.expedition.cargo.insert(ResourceKind::Rations, 10.0);
+        s.advance(&w, 5);
+        // Ate 3 * 0.15 * 5 = 2.25 Rations from cargo; no starvation yet.
+        assert!(
+            (s.expedition
+                .cargo
+                .get(&ResourceKind::Rations)
+                .copied()
+                .unwrap()
+                - 7.75)
+                .abs()
+                < 1e-9
+        );
+        let morale_before = s.expedition.away_team.morale;
+        s.expedition.cargo.remove(&ResourceKind::Rations); // out of food
+        s.advance(&w, 3);
+        assert!(
+            s.expedition.away_team.morale < morale_before,
+            "starvation hits morale"
         );
     }
 
