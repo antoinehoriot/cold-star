@@ -1,0 +1,6 @@
+[
+    ( biome: Frozen,  blurb: "Ice and silence. The cold gets into the seams of everything you own." ),
+    ( biome: Toxic,   blurb: "A corrosive sky. The world is trying to dissolve you, patiently." ),
+    ( biome: Verdant, blurb: "Green and breathing. Something here is alive, and it was here first." ),
+    ( biome: Ruined,  blurb: "Someone built here once. What's left has the shape of your own halls." ),
+]

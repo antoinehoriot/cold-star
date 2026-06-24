@@ -10,6 +10,7 @@ const ORIGINS_RON: &str = include_str!("../data/origins.ron");
 const JOBS_RON: &str = include_str!("../data/jobs.ron");
 const MODULES_RON: &str = include_str!("../data/modules.ron");
 const TECHS_RON: &str = include_str!("../data/techs.ron");
+const BIOMES_RON: &str = include_str!("../data/biomes.ron");
 
 #[derive(Debug)]
 pub enum ContentError {
@@ -207,6 +208,7 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     Ok(())
 }
 
+use sim::galaxy::Biome;
 use sim::job::{JobId, JobRegistry};
 use sim::module::{ModuleId, ModuleRegistry};
 use sim::research::{TechId, TechRegistry};
@@ -416,6 +418,29 @@ pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
     Ok(origins)
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct BiomeDef {
+    pub biome: Biome,
+    pub blurb: String,
+}
+
+pub fn load_biomes() -> Result<Vec<BiomeDef>, ContentError> {
+    let defs: Vec<BiomeDef> =
+        ron::from_str(BIOMES_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    for want in [Biome::Frozen, Biome::Toxic, Biome::Verdant, Biome::Ruined] {
+        let def = defs
+            .iter()
+            .find(|d| d.biome == want)
+            .ok_or_else(|| ContentError::Invalid(format!("biomes.ron missing {want:?}")))?;
+        if def.blurb.trim().is_empty() {
+            return Err(ContentError::Invalid(format!(
+                "{want:?}: blurb must not be empty"
+            )));
+        }
+    }
+    Ok(defs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,6 +633,21 @@ mod tests {
         assert_eq!(t.drive_upgrade_isotopes, 10.0);
         assert_eq!(t.drive_upgrade_step, 15.0);
         assert_eq!(t.scavenge_fuel, 6.0);
+    }
+
+    #[test]
+    fn loads_four_biomes_with_blurbs() {
+        let b = load_biomes().unwrap();
+        assert_eq!(b.len(), 4);
+        for want in [
+            sim::galaxy::Biome::Frozen,
+            sim::galaxy::Biome::Toxic,
+            sim::galaxy::Biome::Verdant,
+            sim::galaxy::Biome::Ruined,
+        ] {
+            let def = b.iter().find(|d| d.biome == want).expect("biome present");
+            assert!(!def.blurb.trim().is_empty());
+        }
     }
 
     #[test]
