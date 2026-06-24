@@ -1005,7 +1005,6 @@ impl GameState {
                     return Err(Rejected("no consumable of that type"));
                 }
                 *self.consumables.entry(kind).or_insert(0) -= 1;
-                let crew = self.expedition.away_team.crew;
                 match kind {
                     ConsumableKind::MedGel => {
                         let max = self.squad_hp_max(tuning);
@@ -1027,7 +1026,6 @@ impl GameState {
                             .map(|c| c.enemy_hp)
                             .unwrap_or(1.0);
                         if enemy_hp <= 0.0 {
-                            let _ = crew; // suppress unused warning
                             self.win_combat(
                                 world,
                                 &self
@@ -3058,6 +3056,42 @@ mod tests {
                 || s.expedition.landing.as_ref().unwrap().combat.is_none(),
             "combat resolved"
         );
+    }
+
+    #[test]
+    fn advance_n_equals_n_times_advance_1_during_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let setup = |s: &mut GameState| {
+            s.ship.built = true;
+            s.ship.cargo = 500.0;
+            s.crew.total = 3;
+            s.apply(&w, Action::SetAwayCrew { delta: 3 }).unwrap();
+            // weapon_tier 0 (default) gives a weaker squad that will trade blows
+            // for several ticks before defeating a depth-1 remnant.
+            s.expedition.location = crate::galaxy::SystemId(1);
+            let idx = plant_planet(s, crate::galaxy::Biome::Ruined);
+            s.apply(&w, Action::Land(idx)).unwrap();
+            // Inject combat so tick_combat runs from tick 1.
+            s.expedition.landing.as_mut().unwrap().combat =
+                Some(crate::combat::remnant_stats(1, 1.0, &t));
+            // Rations keep the away team fed through the window.
+            s.expedition.cargo.insert(ResourceKind::Rations, 1000.0);
+        };
+        let mut bulk = GameState::new(&w, 1);
+        setup(&mut bulk);
+        let mut step = GameState::new(&w, 1);
+        setup(&mut step);
+        // Verify combat is actually active at the start so tick_combat is exercised.
+        assert!(
+            bulk.expedition.landing.as_ref().unwrap().combat.is_some(),
+            "combat must be active at tick 0 for this test to be meaningful"
+        );
+        bulk.advance(&w, 30);
+        for _ in 0..30 {
+            step.advance(&w, 1);
+        }
+        assert_eq!(bulk, step);
     }
 
     #[test]
