@@ -538,8 +538,10 @@ fn cb1_geared_squad_clears_a_remnant() {
     );
 }
 
-/// CB1 — a 1-crew no-gear squad facing a deep Remnant (depth 3) can Flee
-/// without a game-over. The squad takes damage but survives.
+/// CB1 — a 2-crew no-gear squad facing a deep Remnant (depth 3) can Flee
+/// immediately (player-initiated, before auto-resolve) and walks away with
+/// the landing still active and crew intact. Validates the CB1 done-when:
+/// "a player who avoids fights remains viable."
 #[test]
 fn cb1_weak_squad_can_flee() {
     let (t, j, m, tc) = setup();
@@ -555,10 +557,12 @@ fn cb1_weak_squad_can_flee() {
     s.ship.built = true;
     s.ship.cargo = 500.0;
 
-    // 1-crew away-team, no gear (default tier 0). Must assign while at HOME.
-    s.crew.total = 2; // 1 spare for station
-    s.apply(&w, Action::SetAwayCrew { delta: 1 }).unwrap();
-    assert_eq!(s.expedition.away_team.crew, 1);
+    // 2-crew away-team (1 spare for station), no gear (default tier 0).
+    // 2 crew ensures a single tick cannot wipe the squad before we flee.
+    // Must assign while at HOME.
+    s.crew.total = 3; // 1 spare for station
+    s.apply(&w, Action::SetAwayCrew { delta: 2 }).unwrap();
+    assert_eq!(s.expedition.away_team.crew, 2);
 
     // Now move expedition to a remote system and register a Ruined planet.
     s.expedition.location = SystemId(2);
@@ -574,47 +578,56 @@ fn cb1_weak_squad_can_flee() {
     s.apply(&w, Action::Land(0)).unwrap();
     assert!(s.expedition.landing.is_some());
 
-    // Inject a deep (depth=3) Remnant — scaled by combat_depth_mult this is very
-    // dangerous for a single unequipped marine.
+    // Inject a deep (depth=3) Remnant — very dangerous for an unequipped squad.
     {
         let landing = s.expedition.landing.as_mut().unwrap();
         landing.combat = Some(remnant_stats(3, 1.0, &t));
     }
 
-    // Advance 2 ticks so the squad takes real damage (proves the fight runs).
-    s.advance(&w, 2);
-
-    let crew_after_hits = s.expedition.away_team.crew;
-    let hp_after_hits = s.expedition.away_team.hp;
-
-    // The squad may have auto-fled if morale hit rout or crew hit 0 — both fine.
-    // Only assert if combat is still active that we can Flee manually.
-    let still_fighting = s
-        .expedition
-        .landing
-        .as_ref()
-        .and_then(|l| l.combat.as_ref())
-        .is_some();
-
-    if still_fighting {
-        // Manual Flee — must succeed.
-        s.apply(&w, Action::Flee).unwrap();
-    }
-
-    // After fleeing: landing persists (partial retreat) and crew total > 0.
-    // (If the 2 advance ticks auto-wiped the squad, the wipe path also clears
-    //  landing — but crew.total tracks the real count.)
+    // Confirm combat is now active BEFORE any advance tick.
     assert!(
-        s.crew.total > 0,
-        "crew.total must stay > 0 after fleeing (crew_after_hits={crew_after_hits}, hp={hp_after_hits})"
+        s.expedition
+            .landing
+            .as_ref()
+            .and_then(|l| l.combat.as_ref())
+            .is_some(),
+        "combat must be active immediately after injection"
     );
 
-    // No active combat remaining.
+    // Player-initiated Flee — UNCONDITIONAL, dispatched before any advance.
+    // This is the "avoid the fight" path: the player sees danger and runs.
+    // Must be accepted by the engine (combat is active).
+    s.apply(&w, Action::Flee)
+        .expect("Action::Flee must be accepted while combat is active");
+
+    // Flee semantics (crew > 0 path): landing persists, combat is cleared.
+    assert!(
+        s.expedition.landing.is_some(),
+        "landing must persist after a non-wipe flee (partial retreat keeps the surface)"
+    );
     let combat_active = s
         .expedition
         .landing
         .as_ref()
         .and_then(|l| l.combat.as_ref())
         .is_some();
-    assert!(!combat_active, "combat should not be active after Flee");
+    assert!(!combat_active, "combat must be cleared after Flee");
+
+    // Squad survived: player can continue.
+    assert!(
+        s.expedition.away_team.crew > 0,
+        "away_team.crew must be > 0 after fleeing"
+    );
+    assert!(
+        s.crew.total > 0,
+        "crew.total must be > 0 after fleeing (player remains viable)"
+    );
+
+    // Extract still works — confirms the landing is navigable post-flee.
+    s.apply(&w, Action::Extract)
+        .expect("Extract must succeed after fleeing (landing still active)");
+    assert!(
+        s.expedition.landing.is_none(),
+        "landing should be cleared after Extract"
+    );
 }
