@@ -811,6 +811,12 @@ impl GameState {
                     "Dropship down. Your boots find a world.",
                     tuning.log_capacity,
                 );
+                self.note_once(
+                    NoteId::FirstLanding,
+                    "Someone Else's Sky",
+                    "The air here has its own colour, its own weight. You are the first thing from your world to stand in it — and you notice, almost before anything else, that you have already begun to change it.",
+                    tuning,
+                );
                 Ok(())
             }
             Action::Extract => {
@@ -850,8 +856,55 @@ impl GameState {
                 self.expedition.landing.as_mut().unwrap().node = target;
                 Ok(())
             }
-            // Temporary stubs — replaced in Task 6.
-            Action::HarvestLife | Action::LeaveLife => Err(Rejected("nothing to resolve")),
+            Action::HarvestLife => {
+                let Some(l) = self.expedition.landing.as_mut() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if !l.pending_choice {
+                    return Err(Rejected("nothing to harvest"));
+                }
+                let (system, site_idx, biome, node) = (l.system, l.site_idx, l.biome, l.node);
+                let depth = self
+                    .surface_site(world, system, site_idx, biome)
+                    .get(node)
+                    .map(|n| n.depth)
+                    .unwrap_or(0);
+                let amt = tuning.surface_life_harvest
+                    * (1.0 + depth as f64 * tuning.surface_depth_reward);
+                self.satchel_add(ResourceKind::Rations, amt);
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.pending_choice = false;
+                }
+                self.mark_resolved(system, site_idx, node);
+                self.note_once(
+                    NoteId::FirstLifeTaken,
+                    "What You Took",
+                    "You process what you need and leave the rest. The record shows a gain in Rations. It does not show what was here before you, or that it will not be here again.",
+                    tuning,
+                );
+                Ok(())
+            }
+            Action::LeaveLife => {
+                let Some(l) = self.expedition.landing.as_mut() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if !l.pending_choice {
+                    return Err(Rejected("nothing to leave"));
+                }
+                let (system, site_idx, node) = (l.system, l.site_idx, l.node);
+                self.satchel_add(ResourceKind::Data, tuning.surface_life_leave_data);
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.pending_choice = false;
+                }
+                self.mark_resolved(system, site_idx, node);
+                self.note_once(
+                    NoteId::LifeSpared,
+                    "What You Left",
+                    "You note the organism and move on. You tell yourself it was a practical decision — data over calories, scarcity of suit time. You do not examine how long you stood there before choosing.",
+                    tuning,
+                );
+                Ok(())
+            }
         }
     }
 
@@ -1091,6 +1144,14 @@ impl GameState {
                     "Wreckage of something that came before.",
                     tuning.log_capacity,
                 );
+                if depth >= tuning.surface_depth_max {
+                    self.note_once(
+                        NoteId::RuinRhymes,
+                        "It Rhymes",
+                        "The layout is wrong for this world — the struts are in the wrong places, the load-bearing members too familiar. You measure the angles. They match your own station's frame exactly, down to the tolerances. You stand in the ruin of something that had not yet been built when you left.",
+                        tuning,
+                    );
+                }
             }
             crate::landing::EncounterKind::Life => {
                 if let Some(l) = self.expedition.landing.as_mut() {
@@ -1199,6 +1260,21 @@ impl GameState {
             Grant::SetFlag(f) => {
                 self.flags.insert(*f);
             }
+        }
+    }
+
+    fn note_once(&mut self, id: NoteId, title: &str, text: &str, tuning: &Tuning) {
+        if self.codex.add(Discovery {
+            id: DiscoveryId::Note(id),
+            title: title.into(),
+            text: text.into(),
+            tick: self.tick,
+        }) {
+            self.log.push(
+                self.tick,
+                "Something in you takes note.",
+                tuning.log_capacity,
+            );
         }
     }
 
@@ -2297,6 +2373,29 @@ mod tests {
             let l = self.expedition.landing.as_ref().unwrap();
             self.surface_site(world, l.system, l.site_idx, l.biome)
         }
+
+        /// Scan the regenerated surface for the first Life node (any depth) and
+        /// return its id, or None if no Life node exists on this surface.
+        #[cfg(test)]
+        pub fn find_life_node_for_test(&self, world: &World) -> Option<u32> {
+            let l = self.expedition.landing.as_ref()?;
+            let site = self.surface_site(world, l.system, l.site_idx, l.biome);
+            site.nodes
+                .iter()
+                .find(|n| n.kind == crate::landing::EncounterKind::Life)
+                .map(|n| n.id)
+        }
+
+        /// Teleport the current landing to `node` and advance 1 tick so
+        /// `resolve_node` fires, leaving `pending_choice` set for a Life node.
+        #[cfg(test)]
+        pub fn walk_to_for_test(&mut self, world: &World, node: u32) {
+            if let Some(l) = self.expedition.landing.as_mut() {
+                l.node = node;
+                l.traverse = 1;
+            }
+            self.advance(world, 1);
+        }
     }
 
     /// Inject a Planet site at the current location and return its index.
@@ -2361,6 +2460,32 @@ mod tests {
             s.apply(&w, Action::ScanSystem(crate::galaxy::SystemId(2)))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn life_harvest_and_leave_resolve_with_notes() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Verdant);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        assert!(s.codex.has(crate::codex::DiscoveryId::Note(
+            crate::codex::NoteId::FirstLanding
+        )));
+        // Drive the landing onto a Life node, then harvest.
+        if let Some(node) = s.find_life_node_for_test(&w) {
+            s.walk_to_for_test(&w, node); // helper: set node + resolve
+            assert!(s.expedition.landing.as_ref().unwrap().pending_choice);
+            let before = s.expedition.landing.as_ref().unwrap().satchel_total();
+            s.apply(&w, Action::HarvestLife).unwrap();
+            assert!(s.expedition.landing.as_ref().unwrap().satchel_total() > before);
+            assert!(!s.expedition.landing.as_ref().unwrap().pending_choice);
+            assert!(s.codex.has(crate::codex::DiscoveryId::Note(
+                crate::codex::NoteId::FirstLifeTaken
+            )));
+        }
     }
 
     #[test]

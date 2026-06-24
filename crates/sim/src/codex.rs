@@ -10,6 +10,10 @@ pub enum NoteId {
     JumpTheoryGlimpse,
     HeavyConsumption,
     FirstDerelict,
+    FirstLanding,
+    FirstLifeTaken,
+    RuinRhymes,
+    LifeSpared,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
