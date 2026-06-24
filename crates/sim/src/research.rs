@@ -19,6 +19,7 @@ pub enum TechId {
     JumpTheory,
     Navigation,
     CombatDoctrine,
+    XenoContact,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

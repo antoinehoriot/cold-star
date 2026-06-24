@@ -35,4 +35,8 @@
       data_cost: 18.0, research_ticks: 55, requires: [JumpTheory],
       grant: SetFlag(CombatDoctrineKnown),
       lore: "You write it down like it is theory. How to hold a line. How to take ground without losing what you came for. The dark has things in it that will not move aside, and now you have a word for what to do about that." ),
+    ( id: XenoContact, name: "Xeno Contact", blurb: "Read the signs of what's out there.",
+      data_cost: 16.0, research_ticks: 50, requires: [DeepScan],
+      grant: SetFlag(XenoContactKnown),
+      lore: "The instruments were built to read rock and radiation. Turned the right way, they read something else — life, and not the quiet kind. Peers, maybe. The word sits uneasily. You learn its grammar anyway." ),
 ]

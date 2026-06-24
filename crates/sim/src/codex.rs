@@ -16,6 +16,10 @@ pub enum NoteId {
     LifeSpared,
     FirstRemnant,
     FirstMarineLost,
+    FirstPeerMet,
+    FirstPeerSpared,
+    FirstPeerKilled,
+    FirstFaunaDisplaced,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

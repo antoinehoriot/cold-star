@@ -409,6 +409,7 @@ pub fn load_techs() -> Result<TechRegistry, ContentError> {
         TechId::JumpTheory,
         TechId::Navigation,
         TechId::CombatDoctrine,
+        TechId::XenoContact,
     ] {
         if reg.get(want).is_none() {
             return Err(ContentError::Invalid(format!("techs.ron missing {want:?}")));
@@ -559,9 +560,9 @@ mod tests {
     }
 
     #[test]
-    fn loads_nine_techs() {
+    fn loads_ten_techs() {
         let techs = load_techs().unwrap();
-        assert_eq!(techs.0.len(), 9);
+        assert_eq!(techs.0.len(), 10);
         // Jump Theory requires Deep Scan and sets a flag.
         let jt = techs.get(sim::research::TechId::JumpTheory).unwrap();
         assert!(jt.requires.contains(&sim::research::TechId::DeepScan));
@@ -773,6 +774,23 @@ mod tests {
         assert_eq!(t.surface_ruin_data, 10.0);
         assert_eq!(t.surface_life_harvest, 22.0);
         assert_eq!(t.planet_site_weight, 0.5);
+    }
+
+    #[test]
+    fn xeno_contact_grants_flag_and_requires_deep_scan() {
+        let techs = load_techs().unwrap();
+        let xc = techs.get(sim::research::TechId::XenoContact).unwrap();
+        assert!(
+            matches!(
+                xc.grant,
+                sim::research::Grant::SetFlag(sim::flags::Flag::XenoContactKnown)
+            ),
+            "XenoContact must grant XenoContactKnown"
+        );
+        assert!(
+            xc.requires.contains(&sim::research::TechId::DeepScan),
+            "XenoContact must require DeepScan"
+        );
     }
 
     #[test]

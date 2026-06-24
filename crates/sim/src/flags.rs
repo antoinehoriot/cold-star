@@ -21,6 +21,7 @@ pub enum Flag {
     ShipyardComplete,
     NavigationKnown,
     CombatDoctrineKnown,
+    XenoContactKnown,
 }
 
 #[cfg(test)]
