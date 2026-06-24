@@ -45,6 +45,8 @@ pub enum EncounterKind {
     Life,
     Empty,
     Remnant,
+    Fauna,
+    Peer,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -154,7 +156,7 @@ impl SurfaceSite {
 /// Ruin; Toxic skews Hazard; Frozen skews caches/empty. Deeper bands raise Hazard/Ruin.
 fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> EncounterKind {
     let deep = depth >= 2;
-    // (Cache, Hazard, Ruin, Life, Empty, Remnant)
+    // (Cache, Hazard, Ruin, Life, Empty, Remnant, Fauna, Peer)
     let w = match biome {
         Biome::Frozen => (
             4.0,
@@ -163,6 +165,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             0.0,
             2.0,
             if deep { 1.5 } else { 0.5 },
+            0.0,
+            0.0,
         ),
         Biome::Toxic => (
             2.5,
@@ -171,6 +175,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             0.0,
             1.0,
             if deep { 2.0 } else { 1.0 },
+            0.0,
+            0.0,
         ),
         Biome::Verdant => (
             3.0,
@@ -179,6 +185,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             3.0,
             1.0,
             if deep { 1.0 } else { 0.0 },
+            if deep { 2.5 } else { 2.0 },
+            0.0,
         ),
         Biome::Ruined => (
             2.0,
@@ -187,6 +195,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             0.0,
             1.0,
             if deep { 3.5 } else { 2.0 },
+            0.0,
+            if deep { 2.0 } else { 1.0 },
         ),
         Biome::Molten => (
             3.0,
@@ -195,6 +205,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             0.0,
             1.0,
             if deep { 1.5 } else { 0.5 },
+            0.0,
+            0.0,
         ),
         Biome::Dead => (
             1.5,
@@ -203,6 +215,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             0.0,
             3.0,
             if deep { 3.0 } else { 2.0 },
+            0.0,
+            if deep { 2.0 } else { 1.0 },
         ),
         Biome::Oceanic => (
             3.0,
@@ -211,6 +225,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
             3.0,
             1.0,
             if deep { 1.0 } else { 0.0 },
+            if deep { 2.5 } else { 2.0 },
+            0.0,
         ),
     };
     let table = [
@@ -220,6 +236,8 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
         (EncounterKind::Life, w.3),
         (EncounterKind::Empty, w.4),
         (EncounterKind::Remnant, w.5),
+        (EncounterKind::Fauna, w.6),
+        (EncounterKind::Peer, w.7),
     ];
     let total: f64 = table.iter().map(|&(_, x)| x).sum();
     let mut pick = rng.next_f64() * total;
@@ -322,6 +340,88 @@ mod tests {
         assert!(!life_in(Biome::Frozen), "frozen has no life");
         assert!(!life_in(Biome::Molten), "molten has no life");
         assert!(!life_in(Biome::Dead), "dead has no life");
+    }
+
+    #[test]
+    fn fauna_and_peer_biome_constraints() {
+        let t = Tuning::default();
+        let has_kind = |biome, kind: EncounterKind| {
+            (0..100u32).any(|k| {
+                SurfaceSite::generate(surface_seed(k as u64, SystemId(1), 0), biome, &t)
+                    .nodes
+                    .iter()
+                    .any(|n| n.kind == kind)
+            })
+        };
+        let never_kind = |biome, kind: EncounterKind| {
+            !(0..200u32).any(|k| {
+                SurfaceSite::generate(surface_seed(k as u64, SystemId(2), 0), biome, &t)
+                    .nodes
+                    .iter()
+                    .any(|n| n.kind == kind)
+            })
+        };
+        // Verdant and Oceanic can surface Fauna.
+        assert!(
+            has_kind(Biome::Verdant, EncounterKind::Fauna),
+            "verdant surfaces Fauna"
+        );
+        assert!(
+            has_kind(Biome::Oceanic, EncounterKind::Fauna),
+            "oceanic surfaces Fauna"
+        );
+        // Verdant and Oceanic never surface Peer.
+        assert!(
+            never_kind(Biome::Verdant, EncounterKind::Peer),
+            "verdant must never surface Peer"
+        );
+        assert!(
+            never_kind(Biome::Oceanic, EncounterKind::Peer),
+            "oceanic must never surface Peer"
+        );
+        // Ruined and Dead can surface Peer.
+        assert!(
+            has_kind(Biome::Ruined, EncounterKind::Peer),
+            "ruined surfaces Peer"
+        );
+        assert!(
+            has_kind(Biome::Dead, EncounterKind::Peer),
+            "dead surfaces Peer"
+        );
+        // Ruined and Dead never surface Fauna.
+        assert!(
+            never_kind(Biome::Ruined, EncounterKind::Fauna),
+            "ruined must never surface Fauna"
+        );
+        assert!(
+            never_kind(Biome::Dead, EncounterKind::Fauna),
+            "dead must never surface Fauna"
+        );
+        // Frozen and Molten surface neither.
+        assert!(
+            never_kind(Biome::Frozen, EncounterKind::Fauna),
+            "frozen has no Fauna"
+        );
+        assert!(
+            never_kind(Biome::Frozen, EncounterKind::Peer),
+            "frozen has no Peer"
+        );
+        assert!(
+            never_kind(Biome::Molten, EncounterKind::Fauna),
+            "molten has no Fauna"
+        );
+        assert!(
+            never_kind(Biome::Molten, EncounterKind::Peer),
+            "molten has no Peer"
+        );
+        assert!(
+            never_kind(Biome::Toxic, EncounterKind::Fauna),
+            "toxic has no Fauna"
+        );
+        assert!(
+            never_kind(Biome::Toxic, EncounterKind::Peer),
+            "toxic has no Peer"
+        );
     }
 
     #[test]

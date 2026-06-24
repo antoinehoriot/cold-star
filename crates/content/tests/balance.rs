@@ -337,6 +337,9 @@ fn m5_landing_is_survivable_and_profitable() {
     )));
     let idx = v.len() - 1;
 
+    // XenoContactKnown so Fauna encounters open a negotiation rather than immediately
+    // triggering combat (this test has no away team; we test the core haul loop only).
+    s.flags.insert(Flag::XenoContactKnown);
     s.apply(&w, Action::Land(idx)).unwrap();
     // Greedily descend: at each settled step, move to the first edge of the current node,
     // auto-pick Leave on any Life choice, and bail to Extract before the Suit is gone.

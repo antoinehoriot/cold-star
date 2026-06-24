@@ -1635,8 +1635,79 @@ impl GameState {
                 );
                 return; // do not mark resolved; the fight (or flight) decides
             }
+            crate::landing::EncounterKind::Fauna => {
+                self.start_alien(
+                    world,
+                    crate::alien::AlienKind::Fauna,
+                    system,
+                    site_idx,
+                    node,
+                    depth,
+                    grad,
+                );
+                return; // resolution decides
+            }
+            crate::landing::EncounterKind::Peer => {
+                self.start_alien(
+                    world,
+                    crate::alien::AlienKind::Peer,
+                    system,
+                    site_idx,
+                    node,
+                    depth,
+                    grad,
+                );
+                return;
+            }
         }
         self.mark_resolved(system, site_idx, node);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_alien(
+        &mut self,
+        world: &World,
+        kind: crate::alien::AlienKind,
+        system: SystemId,
+        site_idx: usize,
+        node: u32,
+        depth: u32,
+        grad: f64,
+    ) {
+        let tuning = world.tuning;
+        if self.flags.contains(&Flag::XenoContactKnown) {
+            let seed = crate::landing::surface_seed(self.world_seed, system, site_idx);
+            let disposition = crate::alien::starting_disposition(seed, node, kind, tuning);
+            if let Some(l) = self.expedition.landing.as_mut() {
+                l.alien = Some(crate::alien::AlienEncounter { kind, disposition });
+            }
+            if kind == crate::alien::AlienKind::Peer {
+                self.note_once(
+                    NoteId::FirstPeerMet,
+                    "Another Light",
+                    "You pick it up on passive scan before you see it — a power signature, structured, cycling, too regular to be geological. Then it moves, and the way it moves is wrong: deliberate, economy-of-motion, clearing sightlines the way you clear sightlines. You run a pattern match against your own expedition log. The gait scores 0.94. Whatever it is, it learned to move through hostile terrain the same way you did, because the terrain demanded it. You stand very still and try to decide if that is comforting or not.",
+                    tuning,
+                );
+            }
+            self.log
+                .push(self.tick, "You are not alone here.", tuning.log_capacity);
+        } else {
+            // No contact protocol — it reads as a threat. Straight to a fight.
+            let combat = match kind {
+                crate::alien::AlienKind::Fauna => crate::alien::fauna_stats(depth, grad, tuning),
+                crate::alien::AlienKind::Peer => {
+                    crate::alien::peer_stats(depth, grad, self.gear, tuning)
+                }
+            };
+            if let Some(l) = self.expedition.landing.as_mut() {
+                l.combat = Some(combat);
+            }
+            self.log.push(
+                self.tick,
+                "It moves at you before you can think.",
+                tuning.log_capacity,
+            );
+        }
     }
 
     fn satchel_add(&mut self, k: ResourceKind, amt: f64) {
