@@ -48,6 +48,16 @@ struct LandingVM {
     nodes: Vec<SurfaceNodeVM>,
 }
 
+#[derive(Clone, PartialEq)]
+struct LoadoutVM {
+    away_crew: u32,
+    idle: u32,
+    weapon_tier: u8,
+    armor_tier: u8,
+    // (kind, label, count) for each consumable kind
+    consumables: Vec<(sim::gear::ConsumableKind, String, u32)>,
+}
+
 const CSS: &str = "
 :root { color-scheme: dark; }
 body { margin: 0; background: #05070a; color: #c7d3dd;
@@ -714,6 +724,45 @@ fn SurfaceView(
 }
 
 #[component]
+fn LoadoutPanel(
+    vm: LoadoutVM,
+    can_set_crew: bool,
+    on_set_crew: EventHandler<i32>,
+    on_upgrade_weapon: EventHandler<()>,
+    on_upgrade_armor: EventHandler<()>,
+    on_craft: EventHandler<sim::gear::ConsumableKind>,
+) -> Element {
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "AWAY-TEAM" }
+            div { class: "job-row",
+                span { "Marines \u{00d7}{vm.away_crew}  " span { class: "muted", "({vm.idle} idle)" } }
+                span {
+                    button { class: "mini", disabled: !can_set_crew || vm.away_crew == 0, onclick: move |_| on_set_crew.call(-1), "\u{2212}" }
+                    button { class: "mini", disabled: !can_set_crew || vm.idle == 0, onclick: move |_| on_set_crew.call(1), "+" }
+                }
+            }
+            if !can_set_crew { div { class: "muted", "Dock to change the away-team." } }
+            div { class: "panel-title", "ARMORY" }
+            div { class: "job-row",
+                span { "Weapon T{vm.weapon_tier}" }
+                button { class: "mini", disabled: vm.weapon_tier >= 2, onclick: move |_| on_upgrade_weapon.call(()), "upgrade" }
+            }
+            div { class: "job-row",
+                span { "Armor T{vm.armor_tier}" }
+                button { class: "mini", disabled: vm.armor_tier >= 2, onclick: move |_| on_upgrade_armor.call(()), "upgrade" }
+            }
+            for (kind, label, count) in vm.consumables.clone() {
+                div { class: "job-row",
+                    span { "{label} \u{00d7}{count}" }
+                    button { class: "mini", onclick: move |_| on_craft.call(kind), "craft" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
     let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
@@ -1139,6 +1188,34 @@ fn Console(
             nodes,
         }
     });
+    let armory_built = gs.built_count(sim::module::ModuleId::Armory) > 0;
+    let loadout_vm = if armory_built {
+        use sim::gear::ConsumableKind::*;
+        Some(LoadoutVM {
+            away_crew: gs.expedition.away_team.crew,
+            idle: gs.crew.idle(),
+            weapon_tier: gs.gear.weapon_tier,
+            armor_tier: gs.gear.armor_tier,
+            consumables: [
+                (MedGel, "Med-gel"),
+                (Grenade, "Grenade"),
+                (Shield, "Shield"),
+            ]
+            .iter()
+            .map(|(k, label)| {
+                (
+                    *k,
+                    label.to_string(),
+                    gs.consumables.get(k).copied().unwrap_or(0),
+                )
+            })
+            .collect(),
+        })
+    } else {
+        None
+    };
+    // Whether away-crew can be changed now (docked only).
+    let can_set_crew = !gs.away() && !gs.landed();
     drop(snapshot);
 
     let mut act = move |action: Action| {
@@ -1404,6 +1481,44 @@ fn Console(
                                 if let Some(gs) = state.write().as_mut() {
                                     let _ = gs.apply(&world, Action::SetPriority { consumer, up });
                                 }
+                            },
+                        }
+                    }
+                    if let Some(vm) = loadout_vm.clone() {
+                        LoadoutPanel {
+                            vm,
+                            can_set_crew,
+                            on_set_crew: move |delta| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::SetAwayCrew { delta }); }
+                            },
+                            on_upgrade_weapon: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeWeapon); }
+                            },
+                            on_upgrade_armor: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeArmor); }
+                            },
+                            on_craft: move |kind| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::CraftConsumable(kind)); }
                             },
                         }
                     }
