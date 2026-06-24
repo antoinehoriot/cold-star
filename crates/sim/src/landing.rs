@@ -92,6 +92,11 @@ impl SurfaceSite {
             layers.push(layer);
         }
         // Wire forward edges: each node in layer d connects to 1..=2 nodes in layer d+1.
+        // Track incoming-edge count per node to later guarantee reachability.
+        let total_nodes = nodes.len();
+        let mut incoming = vec![0u32; total_nodes];
+        // Entry node is trivially "reached".
+        incoming[0] = 1;
         for d in 0..layers.len().saturating_sub(1) {
             let next = layers[d + 1].clone();
             for &nid in &layers[d].clone() {
@@ -101,7 +106,24 @@ impl SurfaceSite {
                     let edges = &mut nodes[nid as usize].edges;
                     if !edges.contains(&pick) {
                         edges.push(pick);
+                        incoming[pick as usize] += 1;
                     }
+                }
+            }
+        }
+        // Guarantee every non-entry node has at least one incoming edge.
+        // For each layer d+1, any node with zero incoming gets an edge from layer d.
+        for d in 0..layers.len().saturating_sub(1) {
+            let prev = &layers[d];
+            let next = layers[d + 1].clone();
+            for (idx, &nid) in next.iter().enumerate() {
+                if incoming[nid as usize] == 0 {
+                    let src = prev[idx % prev.len()];
+                    let edges = &mut nodes[src as usize].edges;
+                    if !edges.contains(&nid) {
+                        edges.push(nid);
+                    }
+                    incoming[nid as usize] += 1;
                 }
             }
         }
@@ -187,6 +209,37 @@ mod tests {
         }
         // Entry has at least one outgoing edge (you can descend).
         assert!(!g.nodes[0].edges.is_empty());
+    }
+
+    #[test]
+    fn every_node_reachable_from_entry() {
+        use std::collections::{BTreeSet, VecDeque};
+        let t = Tuning::default();
+        let all_biomes = [Biome::Frozen, Biome::Toxic, Biome::Verdant, Biome::Ruined];
+        for biome in all_biomes {
+            for seed in [1u64, 2, 7, 42, 99, 1337] {
+                let site = SurfaceSite::generate(surface_seed(seed, SystemId(1), 0), biome, &t);
+                let mut reachable: BTreeSet<u32> = BTreeSet::new();
+                let mut queue: VecDeque<u32> = VecDeque::new();
+                queue.push_back(0);
+                reachable.insert(0);
+                while let Some(nid) = queue.pop_front() {
+                    for &e in &site.nodes[nid as usize].edges {
+                        if reachable.insert(e) {
+                            queue.push_back(e);
+                        }
+                    }
+                }
+                for n in &site.nodes {
+                    assert!(
+                        reachable.contains(&n.id),
+                        "node {} (depth {}) unreachable from entry; biome={biome:?} seed={seed}",
+                        n.id,
+                        n.depth
+                    );
+                }
+            }
+        }
     }
 
     #[test]
