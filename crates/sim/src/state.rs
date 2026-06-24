@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Cumulative scrap salvaged that triggers the heavy-consumption uneasy note.
 const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
 
-pub const SAVE_VERSION: u32 = 7;
+pub const SAVE_VERSION: u32 = 8;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
 /// not part of the saved state).
@@ -1609,10 +1609,10 @@ mod tests {
     }
 
     #[test]
-    fn new_game_is_versioned_v7() {
+    fn new_game_is_versioned_v8() {
         let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
         let s = GameState::new(&world(&t, &j, &m, &tc), 1);
-        assert_eq!(s.version, 7);
+        assert_eq!(s.version, 8);
         assert_eq!(s.resources.cap, t.resource_base_cap);
     }
 

@@ -31,4 +31,8 @@
       data_cost: 15.0, research_ticks: 50, requires: [JumpTheory],
       grant: SetFlag(NavigationKnown),
       lore: "You map the currents between stars. Distance stops being a wall and becomes a question of will." ),
+    ( id: CombatDoctrine, name: "Combat Doctrine", blurb: "Unlocks the Armory.",
+      data_cost: 18.0, research_ticks: 55, requires: [JumpTheory],
+      grant: SetFlag(CombatDoctrineKnown),
+      lore: "You write it down like it is theory. How to hold a line. How to take ground without losing what you came for. The dark has things in it that will not move aside, and now you have a word for what to do about that." ),
 ]

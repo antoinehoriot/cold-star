@@ -18,6 +18,7 @@ pub enum TechId {
     DeepScan,
     JumpTheory,
     Navigation,
+    CombatDoctrine,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

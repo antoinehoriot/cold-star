@@ -19,6 +19,7 @@ pub enum ModuleId {
     Capacitor,
     Shipyard,
     SensorArray,
+    Armory,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

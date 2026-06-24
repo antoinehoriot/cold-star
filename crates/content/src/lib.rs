@@ -316,6 +316,7 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
         ModuleId::Capacitor,
         ModuleId::Shipyard,
         ModuleId::SensorArray,
+        ModuleId::Armory,
     ] {
         if reg.get(want).is_none() {
             return Err(ContentError::Invalid(format!(
@@ -368,6 +369,7 @@ pub fn load_techs() -> Result<TechRegistry, ContentError> {
         TechId::DeepScan,
         TechId::JumpTheory,
         TechId::Navigation,
+        TechId::CombatDoctrine,
     ] {
         if reg.get(want).is_none() {
             return Err(ContentError::Invalid(format!("techs.ron missing {want:?}")));
@@ -518,9 +520,9 @@ mod tests {
     }
 
     #[test]
-    fn loads_eight_techs() {
+    fn loads_nine_techs() {
         let techs = load_techs().unwrap();
-        assert_eq!(techs.0.len(), 8);
+        assert_eq!(techs.0.len(), 9);
         // Jump Theory requires Deep Scan and sets a flag.
         let jt = techs.get(sim::research::TechId::JumpTheory).unwrap();
         assert!(jt.requires.contains(&sim::research::TechId::DeepScan));
@@ -550,7 +552,7 @@ mod tests {
         assert_eq!(salv.power_draw, 0.0);
 
         let mods = load_modules().unwrap();
-        assert_eq!(mods.0.len(), 13);
+        assert_eq!(mods.0.len(), 14);
         // Every module has a non-empty narrative description (the build tooltip).
         for m in mods.iter() {
             assert!(
@@ -732,6 +734,22 @@ mod tests {
         assert_eq!(t.surface_ruin_data, 10.0);
         assert_eq!(t.surface_life_harvest, 22.0);
         assert_eq!(t.planet_site_weight, 0.5);
+    }
+
+    #[test]
+    fn combat_doctrine_and_armory_present() {
+        let techs = load_techs().unwrap();
+        let cd = techs.get(sim::research::TechId::CombatDoctrine).unwrap();
+        assert!(matches!(
+            cd.grant,
+            sim::research::Grant::SetFlag(sim::flags::Flag::CombatDoctrineKnown)
+        ));
+        let mods = load_modules().unwrap();
+        let armory = mods.get(sim::module::ModuleId::Armory).unwrap();
+        assert_eq!(
+            armory.requires_flag,
+            Some(sim::flags::Flag::CombatDoctrineKnown)
+        );
     }
 
     #[test]

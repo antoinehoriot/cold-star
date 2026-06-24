@@ -20,6 +20,7 @@ pub enum Flag {
     CodexUnlocked,
     ShipyardComplete,
     NavigationKnown,
+    CombatDoctrineKnown,
 }
 
 #[cfg(test)]
