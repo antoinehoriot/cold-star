@@ -393,7 +393,11 @@ fn NavigationPanel(
 ) -> Element {
     let mut selected = use_signal(|| current);
     // Center on the current system's position.
-    let center = rows.iter().find(|r| r.is_current).map(|r| r.pos).unwrap_or((0.0, 0.0));
+    let center = rows
+        .iter()
+        .find(|r| r.is_current)
+        .map(|r| r.pos)
+        .unwrap_or((0.0, 0.0));
     // viewBox half-extent: fit the drive ring + a margin (clamped so a huge drive still renders).
     let half = (drive * 1.25).clamp(30.0, 140.0);
     let view = format!("{} {} {} {}", -half, -half, 2.0 * half, 2.0 * half);
@@ -635,7 +639,10 @@ fn Console(
         .filter(|m| {
             let prereqs_ok = m.requires_modules.iter().all(|r| gs.built_count(*r) > 0);
             let buildable_again = m.repeatable || gs.built_count(m.id) == 0;
-            let flag_ok = m.requires_flag.map(|f| gs.flags.contains(&f)).unwrap_or(true);
+            let flag_ok = m
+                .requires_flag
+                .map(|f| gs.flags.contains(&f))
+                .unwrap_or(true);
             prereqs_ok && buildable_again && flag_ok
         })
         .map(|m| {
@@ -719,10 +726,18 @@ fn Console(
     let isotopes = gs.resources.amount(ResourceKind::Isotopes);
     // A textual label of the current activity (or "Docked"/"Holding at <id>").
     let activity_label: String = match &gs.expedition.activity {
-        Some(sim::expedition::Activity::Transit { to, ticks }) => format!("In transit to system {} \u{2014} {ticks}s", to.0),
-        Some(sim::expedition::Activity::Scan { target, ticks }) => format!("Scanning system {} \u{2014} {ticks}s", target.0),
-        Some(sim::expedition::Activity::ResolveSite { system, ticks, .. }) => format!("Working a site in system {} \u{2014} {ticks}s", system.0),
-        Some(sim::expedition::Activity::Scavenge { ticks }) => format!("Scavenging fuel \u{2014} {ticks}s"),
+        Some(sim::expedition::Activity::Transit { to, ticks }) => {
+            format!("In transit to system {} \u{2014} {ticks}s", to.0)
+        }
+        Some(sim::expedition::Activity::Scan { target, ticks }) => {
+            format!("Scanning system {} \u{2014} {ticks}s", target.0)
+        }
+        Some(sim::expedition::Activity::ResolveSite { system, ticks, .. }) => {
+            format!("Working a site in system {} \u{2014} {ticks}s", system.0)
+        }
+        Some(sim::expedition::Activity::Scavenge { ticks }) => {
+            format!("Scavenging fuel \u{2014} {ticks}s")
+        }
         None if gs.expedition.location == sim::galaxy::HOME => "Docked at the station".to_string(),
         None => format!("Holding at system {}", gs.expedition.location.0),
     };
@@ -734,14 +749,22 @@ fn Console(
         let j = JobRegistry(jobs.read().clone());
         let m = ModuleRegistry(modules.read().clone());
         let tc = TechRegistry(techs.read().clone());
-        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+        let world = World {
+            tuning: &t,
+            jobs: &j,
+            modules: &m,
+            techs: &tc,
+        };
         let galaxy = gs.galaxy(&world);
         let here = galaxy.get(loc).cloned();
         let mut rows: Vec<NavRow> = Vec::new();
         for &sid in gs.galaxy_state.revealed.iter() {
             let id = sim::galaxy::SystemId(sid);
             let Some(sys) = galaxy.get(id) else { continue };
-            let dist = here.as_ref().map(|h| sim::galaxy::distance(h, sys)).unwrap_or(0.0);
+            let dist = here
+                .as_ref()
+                .map(|h| sim::galaxy::distance(h, sys))
+                .unwrap_or(0.0);
             let reachable = id != loc && dist <= ship_drive;
             let cost = sim::galaxy::jump_cost(dist, &t);
             let affordable = gs.resources.fuel >= cost;
@@ -750,7 +773,12 @@ fn Console(
                 .galaxy_state
                 .sites
                 .get(&sid)
-                .map(|v| v.iter().enumerate().map(|(i, s)| (i, format!("{:?}", s.kind), s.depleted)).collect())
+                .map(|v| {
+                    v.iter()
+                        .enumerate()
+                        .map(|(i, s)| (i, format!("{:?}", s.kind), s.depleted))
+                        .collect()
+                })
                 .unwrap_or_default();
             rows.push(NavRow {
                 id,
@@ -765,17 +793,26 @@ fn Console(
                 sites,
             });
         }
-        rows.sort_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap_or(std::cmp::Ordering::Equal));
+        rows.sort_by(|a, b| {
+            a.dist
+                .partial_cmp(&b.dist)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         rows
     } else {
         Vec::new()
     };
     // Stranded? (mirror engine availability so Scavenge only shows when useful)
     let stranded = away && {
-        let cheapest = nav_rows.iter().filter(|r| r.reachable).map(|r| r.cost).fold(f64::INFINITY, f64::min);
+        let cheapest = nav_rows
+            .iter()
+            .filter(|r| r.reachable)
+            .map(|r| r.cost)
+            .fold(f64::INFINITY, f64::min);
         cheapest.is_infinite() || gs.resources.fuel < cheapest
     };
-    let can_upgrade_drive = navigation_known && !away && isotopes >= tuning.read().drive_upgrade_isotopes;
+    let can_upgrade_drive =
+        navigation_known && !away && isotopes >= tuning.read().drive_upgrade_isotopes;
     // Atmosphere warning: the survival clock is running (grace below max) while the
     // Atmosphere module is built and crew exist. Crit when grace is nearly gone.
     let atmo_built = gs
