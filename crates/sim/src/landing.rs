@@ -19,6 +19,7 @@ pub struct Landing {
     pub satchel: BTreeMap<ResourceKind, f64>,
     pub pending_choice: bool,
     pub traverse: u32,
+    pub combat: Option<crate::combat::Combat>,
 }
 
 impl Landing {
@@ -42,6 +43,7 @@ pub enum EncounterKind {
     Ruin,
     Life,
     Empty,
+    Remnant,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -151,15 +153,64 @@ impl SurfaceSite {
 /// Ruin; Toxic skews Hazard; Frozen skews caches/empty. Deeper bands raise Hazard/Ruin.
 fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> EncounterKind {
     let deep = depth >= 2;
-    // (ResourceCache, Hazard, Ruin, Life, Empty)
+    // (Cache, Hazard, Ruin, Life, Empty, Remnant)
     let w = match biome {
-        Biome::Frozen => (4.0, if deep { 3.0 } else { 1.5 }, 1.0, 0.0, 2.0),
-        Biome::Toxic => (2.5, if deep { 4.5 } else { 3.0 }, 1.5, 0.0, 1.0),
-        Biome::Verdant => (3.0, if deep { 2.0 } else { 1.0 }, 1.0, 3.0, 1.0),
-        Biome::Ruined => (2.0, if deep { 3.0 } else { 2.0 }, 4.0, 0.0, 1.0),
-        Biome::Molten => (3.0, if deep { 5.5 } else { 4.0 }, 1.0, 0.0, 1.0),
-        Biome::Dead => (1.5, if deep { 2.0 } else { 1.5 }, 4.0, 0.0, 3.0),
-        Biome::Oceanic => (3.0, if deep { 2.5 } else { 1.5 }, 1.0, 3.0, 1.0),
+        Biome::Frozen => (
+            4.0,
+            if deep { 3.0 } else { 1.5 },
+            1.0,
+            0.0,
+            2.0,
+            if deep { 1.5 } else { 0.5 },
+        ),
+        Biome::Toxic => (
+            2.5,
+            if deep { 4.5 } else { 3.0 },
+            1.5,
+            0.0,
+            1.0,
+            if deep { 2.0 } else { 1.0 },
+        ),
+        Biome::Verdant => (
+            3.0,
+            if deep { 2.0 } else { 1.0 },
+            1.0,
+            3.0,
+            1.0,
+            if deep { 1.0 } else { 0.0 },
+        ),
+        Biome::Ruined => (
+            2.0,
+            if deep { 3.0 } else { 2.0 },
+            4.0,
+            0.0,
+            1.0,
+            if deep { 3.5 } else { 2.0 },
+        ),
+        Biome::Molten => (
+            3.0,
+            if deep { 5.5 } else { 4.0 },
+            1.0,
+            0.0,
+            1.0,
+            if deep { 1.5 } else { 0.5 },
+        ),
+        Biome::Dead => (
+            1.5,
+            if deep { 2.0 } else { 1.5 },
+            4.0,
+            0.0,
+            3.0,
+            if deep { 3.0 } else { 2.0 },
+        ),
+        Biome::Oceanic => (
+            3.0,
+            if deep { 2.5 } else { 1.5 },
+            1.0,
+            3.0,
+            1.0,
+            if deep { 1.0 } else { 0.0 },
+        ),
     };
     let table = [
         (EncounterKind::ResourceCache, w.0),
@@ -167,6 +218,7 @@ fn weighted_encounter(rng: &mut Rng, biome: Biome, depth: u32, _t: &Tuning) -> E
         (EncounterKind::Ruin, w.2),
         (EncounterKind::Life, w.3),
         (EncounterKind::Empty, w.4),
+        (EncounterKind::Remnant, w.5),
     ];
     let total: f64 = table.iter().map(|&(_, x)| x).sum();
     let mut pick = rng.next_f64() * total;
@@ -269,5 +321,35 @@ mod tests {
         assert!(!life_in(Biome::Frozen), "frozen has no life");
         assert!(!life_in(Biome::Molten), "molten has no life");
         assert!(!life_in(Biome::Dead), "dead has no life");
+    }
+
+    #[test]
+    fn remnant_surfaces_in_ruined_not_in_verdant_shallow() {
+        let t = Tuning::default();
+        let remnant_in = |biome| {
+            (0..80u32).any(|k| {
+                SurfaceSite::generate(surface_seed(k as u64, SystemId(1), 0), biome, &t)
+                    .nodes
+                    .iter()
+                    .any(|n| n.kind == EncounterKind::Remnant)
+            })
+        };
+        assert!(remnant_in(Biome::Ruined), "ruined should surface Remnant");
+        assert!(remnant_in(Biome::Dead), "dead should surface Remnant");
+        // Verdant at depth-1 has Remnant weight 0 when not deep (depth < 2).
+        // Tuning default surface_depth_max=3 means nodes at depth 1 and 2 exist.
+        // But depth 2 nodes are "deep" (depth >= 2) and CAN get Remnant weight 1.0.
+        // Depth-1 nodes (not deep) have weight 0.0 — verify no Remnant at depth 1 only.
+        let verdant_depth1_remnant = (0..200u32).any(|k| {
+            SurfaceSite::generate(surface_seed(k as u64, SystemId(1), 0), Biome::Verdant, &t)
+                .nodes
+                .iter()
+                .filter(|n| n.depth == 1)
+                .any(|n| n.kind == EncounterKind::Remnant)
+        });
+        assert!(
+            !verdant_depth1_remnant,
+            "verdant depth-1 nodes must never be Remnant (weight 0)"
+        );
     }
 }

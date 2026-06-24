@@ -827,6 +827,7 @@ impl GameState {
                     satchel: std::collections::BTreeMap::new(),
                     pending_choice: false,
                     traverse: 0,
+                    combat: None,
                 });
                 self.mark_resolved(loc, idx, 0);
                 self.log.push(
@@ -1331,6 +1332,18 @@ impl GameState {
                 return;
             }
             crate::landing::EncounterKind::Empty => {}
+            crate::landing::EncounterKind::Remnant => {
+                let combat = crate::combat::remnant_stats(depth, grad, tuning);
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.combat = Some(combat);
+                }
+                self.log.push(
+                    self.tick,
+                    "A husk uncurls from the wreck. It was a station once.",
+                    tuning.log_capacity,
+                );
+                return; // do not mark resolved; the fight (or flight) decides
+            }
         }
         self.mark_resolved(system, site_idx, node);
     }
