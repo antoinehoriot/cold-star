@@ -607,13 +607,19 @@ fn SurfaceView(
     let svg_h = (MARGIN + max_band as f64 * PX_Y + MARGIN).max(80.0);
     let view = format!("0 0 {svg_w} {svg_h}");
 
-    // Current node's edge set — determines which nodes are clickable to Move.
+    // Current node's reachable set — bidirectional: cur→n (forward) OR n→cur (backward).
+    let cur = vm.nodes.iter().find(|n| n.is_current);
+    let cur_id = cur.map(|n| n.id).unwrap_or(u32::MAX);
     let cur_edges: Vec<u32> = vm
         .nodes
         .iter()
-        .find(|n| n.is_current)
-        .map(|n| n.edges.clone())
-        .unwrap_or_default();
+        .filter(|n| !n.is_current)
+        .filter(|n| {
+            // current→n (forward) OR n→current (backward)
+            cur.map_or(false, |c| c.edges.contains(&n.id)) || n.edges.contains(&cur_id)
+        })
+        .map(|n| n.id)
+        .collect();
 
     // Build a lookup from node id to (x, y) for drawing edges.
     let pos_map: std::collections::HashMap<u32, (f64, f64)> =

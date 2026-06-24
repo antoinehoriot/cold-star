@@ -849,7 +849,7 @@ impl GameState {
                 }
                 let site =
                     self.surface_site(world, landing.system, landing.site_idx, landing.biome);
-                if !site.is_edge(landing.node, target) {
+                if !site.is_neighbor(landing.node, target) {
                     return Err(Rejected("no route to that node"));
                 }
                 self.expedition.landing.as_mut().unwrap().traverse = tuning.traverse_ticks;
@@ -2585,5 +2585,34 @@ mod tests {
             .resolved_nodes
             .contains(&target);
         assert!(resolved);
+    }
+
+    #[test]
+    fn backtrack_to_entry_is_accepted() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Frozen);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        // Find the first outgoing edge from entry node 0.
+        let site = s.surface_for_test(&w);
+        let child = site.nodes[0].edges[0];
+        // Move forward to child.
+        assert!(s.apply(&w, Action::MoveToNode(child)).is_ok());
+        // Advance traverse_ticks so the player arrives at child.
+        s.advance(&w, t.traverse_ticks as u64);
+        assert_eq!(s.expedition.landing.as_ref().unwrap().node, child);
+        // Non-neighbor must still be rejected, with the unchanged message.
+        assert_eq!(
+            s.apply(&w, Action::MoveToNode(999)),
+            Err(Rejected("no route to that node"))
+        );
+        // Move back to entry (node 0) — bidirectional backtrack.
+        assert!(s.apply(&w, Action::MoveToNode(0)).is_ok());
+        // Advancing arrives back at the entry node: the back-move is real.
+        s.advance(&w, t.traverse_ticks as u64);
+        assert_eq!(s.expedition.landing.as_ref().unwrap().node, 0);
     }
 }

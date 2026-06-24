@@ -117,6 +117,12 @@ impl SurfaceSite {
             .map(|n| n.edges.contains(&to))
             .unwrap_or(false)
     }
+
+    /// True if `a` and `b` are connected by an edge in EITHER direction
+    /// (movement along an edge is bidirectional — you can backtrack).
+    pub fn is_neighbor(&self, a: u32, b: u32) -> bool {
+        self.is_edge(a, b) || self.is_edge(b, a)
+    }
 }
 
 /// Biome × depth-band encounter weights. Verdant alone can yield Life; Ruined skews
