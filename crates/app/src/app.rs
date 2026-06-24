@@ -8,6 +8,21 @@ use sim::research::{Tech, TechRegistry};
 use sim::resources::ResourceKind;
 use sim::state::{Action, GameState, World};
 
+#[derive(Clone, PartialEq)]
+struct NavRow {
+    id: sim::galaxy::SystemId,
+    star: String,
+    pos: (f64, f64),
+    dist: f64,
+    is_current: bool,
+    reachable: bool,
+    affordable: bool,
+    scanned: bool,
+    cost: f64,
+    // (site_index, kind label, depleted)
+    sites: Vec<(usize, String, bool)>,
+}
+
 const CSS: &str = "
 :root { color-scheme: dark; }
 body { margin: 0; background: #05070a; color: #c7d3dd;
@@ -84,6 +99,10 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .ls-warn { margin: .8rem 0; padding: .5rem .8rem; border: 1px solid #5a2626; border-radius: 4px;
   color: #e0a24a; font-size: .82rem; letter-spacing: .1em; }
 .ls-warn.crit { color: #d66f6f; border-color: #7a2a2a; }
+.nav-activity { font-size: .82rem; color: #6fb7d6; letter-spacing: .08em; margin: .3rem 0 .5rem; }
+.nav-row { display: flex; justify-content: space-between; align-items: center; font-size: .85rem; padding: .2rem 0; gap: .5rem; }
+.nav-site { display: flex; justify-content: space-between; align-items: center; font-size: .8rem; color: #9fb3c2; padding: .1rem 0 .1rem 1rem; }
+.nav-here { color: #6fd6a0; }
 ";
 
 #[component]
@@ -335,6 +354,74 @@ fn CodexPanel(entries: Vec<(String, String)>) -> Element {
 }
 
 #[component]
+fn NavigationPanel(
+    drive: f64,
+    cargo_used: f64,
+    cargo_max: f64,
+    fuel: f64,
+    isotopes: f64,
+    activity_label: String,
+    busy: bool,
+    away: bool,
+    has_sensor: bool,
+    stranded: bool,
+    can_upgrade_drive: bool,
+    current: sim::galaxy::SystemId,
+    rows: Vec<NavRow>,
+    on_scan: EventHandler<sim::galaxy::SystemId>,
+    on_jump: EventHandler<sim::galaxy::SystemId>,
+    on_resolve: EventHandler<(sim::galaxy::SystemId, usize)>,
+    on_scavenge: EventHandler<()>,
+    on_upgrade: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "panel",
+            div { class: "panel-title", "NAVIGATION" }
+            div { class: "muted",
+                "Drive {drive:.0}  \u{00b7}  Cargo {cargo_used:.0}/{cargo_max:.0}  \u{00b7}  Fuel {fuel:.0}  \u{00b7}  Isotopes {isotopes:.0}"
+            }
+            div { class: "nav-activity", "{activity_label}" }
+            if stranded {
+                button { class: "act", onclick: move |_| on_scavenge.call(()), "Scavenge fuel" }
+            }
+            if can_upgrade_drive {
+                button { class: "act", onclick: move |_| on_upgrade.call(()), "Recalibrate drive (+range)" }
+            }
+            // System list (replaced by the SVG map in a later task).
+            for row in rows {
+                div { class: "nav-row",
+                    span {
+                        if row.is_current { span { class: "nav-here", "\u{25c9} " } }
+                        "Sys {row.id.0} \u{00b7} {row.star} \u{00b7} {row.dist:.0} ly"
+                        if row.scanned { span { class: "muted", " \u{00b7} scanned" } }
+                    }
+                    span {
+                        if !row.is_current && has_sensor && !row.scanned {
+                            button { class: "mini", disabled: busy, onclick: move |_| on_scan.call(row.id), "scan" }
+                        }
+                        if row.reachable {
+                            button { class: "mini", disabled: busy || !row.affordable, onclick: move |_| on_jump.call(row.id), "jump" }
+                        }
+                    }
+                }
+                // Sites at this system (resolve buttons).
+                for (idx, kind, depleted) in row.sites.clone() {
+                    div { class: "nav-site",
+                        span { "{kind}" if depleted { span { class: "muted", " \u{00b7} stripped" } } }
+                        if row.is_current && !depleted {
+                            button { class: "mini", disabled: busy, onclick: move |_| on_resolve.call((row.id, idx)), "work" }
+                        }
+                    }
+                }
+            }
+            if away {
+                div { class: "muted", "Return to the station to deposit cargo and resume control." }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
     let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
@@ -472,7 +559,8 @@ fn Console(
         .filter(|m| {
             let prereqs_ok = m.requires_modules.iter().all(|r| gs.built_count(*r) > 0);
             let buildable_again = m.repeatable || gs.built_count(m.id) == 0;
-            prereqs_ok && buildable_again
+            let flag_ok = m.requires_flag.map(|f| gs.flags.contains(&f)).unwrap_or(true);
+            prereqs_ok && buildable_again && flag_ok
         })
         .map(|m| {
             let n = gs.built_count(m.id);
@@ -544,6 +632,79 @@ fn Console(
         .rev()
         .map(|d| (d.title.clone(), d.text.clone()))
         .collect();
+    // ---- M4 navigation view-model ----
+    let shipyard_complete = gs.flags.contains(&Flag::ShipyardComplete);
+    let navigation_known = gs.flags.contains(&Flag::NavigationKnown);
+    let has_sensor = gs.built_count(sim::module::ModuleId::SensorArray) > 0;
+    let away = gs.away();
+    let ship_drive = gs.ship.drive_range;
+    let ship_cargo_max = gs.ship.cargo;
+    let ship_cargo_used = gs.expedition.cargo_total();
+    let isotopes = gs.resources.amount(ResourceKind::Isotopes);
+    // Current transit, if any (for the in-flight indicator).
+    let _transit: Option<(u32, u32)> = match &gs.expedition.activity {
+        Some(sim::expedition::Activity::Transit { to: _, ticks }) => Some((*ticks, 0)),
+        _ => None,
+    };
+    // A textual label of the current activity (or "Docked"/"Holding at <id>").
+    let activity_label: String = match &gs.expedition.activity {
+        Some(sim::expedition::Activity::Transit { to, ticks }) => format!("In transit to system {} \u{2014} {ticks}s", to.0),
+        Some(sim::expedition::Activity::Scan { target, ticks }) => format!("Scanning system {} \u{2014} {ticks}s", target.0),
+        Some(sim::expedition::Activity::ResolveSite { system, ticks, .. }) => format!("Working a site in system {} \u{2014} {ticks}s", system.0),
+        Some(sim::expedition::Activity::Scavenge { ticks }) => format!("Scavenging fuel \u{2014} {ticks}s"),
+        None if gs.expedition.location == sim::galaxy::HOME => "Docked at the station".to_string(),
+        None => format!("Holding at system {}", gs.expedition.location.0),
+    };
+    let busy = gs.expedition.activity.is_some();
+    let loc = gs.expedition.location;
+    // Build a World to regenerate the galaxy for rendering.
+    let nav_rows: Vec<NavRow> = if shipyard_complete {
+        let t = tuning.read().clone();
+        let j = JobRegistry(jobs.read().clone());
+        let m = ModuleRegistry(modules.read().clone());
+        let tc = TechRegistry(techs.read().clone());
+        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+        let galaxy = gs.galaxy(&world);
+        let here = galaxy.get(loc).cloned();
+        let mut rows: Vec<NavRow> = Vec::new();
+        for &sid in gs.galaxy_state.revealed.iter() {
+            let id = sim::galaxy::SystemId(sid);
+            let Some(sys) = galaxy.get(id) else { continue };
+            let dist = here.as_ref().map(|h| sim::galaxy::distance(h, sys)).unwrap_or(0.0);
+            let reachable = id != loc && dist <= ship_drive;
+            let cost = sim::galaxy::jump_cost(dist, &t);
+            let affordable = gs.resources.fuel >= cost;
+            let scanned = gs.galaxy_state.scanned.contains(&sid);
+            let sites: Vec<(usize, String, bool)> = gs
+                .galaxy_state
+                .sites
+                .get(&sid)
+                .map(|v| v.iter().enumerate().map(|(i, s)| (i, format!("{:?}", s.kind), s.depleted)).collect())
+                .unwrap_or_default();
+            rows.push(NavRow {
+                id,
+                star: format!("{:?}", sys.star_type),
+                pos: sys.pos,
+                dist,
+                is_current: id == loc,
+                reachable,
+                affordable,
+                scanned,
+                cost,
+                sites,
+            });
+        }
+        rows.sort_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap_or(std::cmp::Ordering::Equal));
+        rows
+    } else {
+        Vec::new()
+    };
+    // Stranded? (mirror engine availability so Scavenge only shows when useful)
+    let stranded = away && {
+        let cheapest = nav_rows.iter().filter(|r| r.reachable).map(|r| r.cost).fold(f64::INFINITY, f64::min);
+        cheapest.is_infinite() || gs.resources.fuel < cheapest
+    };
+    let can_upgrade_drive = navigation_known && !away && isotopes >= tuning.read().drive_upgrade_isotopes;
     // Atmosphere warning: the survival clock is running (grace below max) while the
     // Atmosphere module is built and crew exist. Crit when grace is nearly gone.
     let atmo_built = gs
@@ -618,6 +779,9 @@ fn Console(
         div { class: "readout", "REACTOR CORE" }
         div { class: "charge", "{charge:.0} / {capacity:.0}" }
         div { class: "status status-{status}", "{status}" }
+        if shipyard_complete {
+            div { class: "readout", "SHIP \u{00b7} drive {ship_drive:.0} \u{00b7} cargo {ship_cargo_used:.0}/{ship_cargo_max:.0} \u{00b7} isotopes {isotopes:.0}" }
+        }
 
         if let Some((secs, crit)) = atmo_warning {
             div {
@@ -745,6 +909,63 @@ fn Console(
                                 if let Some(gs) = state.write().as_mut() {
                                     let _ = gs.apply(&world, Action::SetPriority { consumer, up });
                                 }
+                            },
+                        }
+                    }
+                    if shipyard_complete {
+                        NavigationPanel {
+                            drive: ship_drive,
+                            cargo_used: ship_cargo_used,
+                            cargo_max: ship_cargo_max,
+                            fuel,
+                            isotopes,
+                            activity_label: activity_label.clone(),
+                            busy,
+                            away,
+                            has_sensor,
+                            stranded,
+                            can_upgrade_drive,
+                            current: loc,
+                            rows: nav_rows.clone(),
+                            on_scan: move |id| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ScanSystem(id)); }
+                            },
+                            on_jump: move |id| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Jump(id)); }
+                            },
+                            on_resolve: move |(id, idx)| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ResolveSite(id, idx)); }
+                            },
+                            on_scavenge: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Scavenge); }
+                            },
+                            on_upgrade: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeDrive); }
                             },
                         }
                     }
