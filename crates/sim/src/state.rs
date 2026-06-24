@@ -1161,6 +1161,10 @@ impl GameState {
                         tuning.log_capacity,
                     );
                 }
+                if to == HOME && self.expedition.away_team.crew > 0 {
+                    self.crew.release_away(self.expedition.away_team.crew);
+                    self.expedition.away_team = crate::expedition::AwayTeam::default();
+                }
                 self.log.push(
                     self.tick,
                     "The drive cuts out. A new star fills the port.",
@@ -1257,13 +1261,24 @@ impl GameState {
         }
     }
 
-    /// While away with a committed squad: eat ship Rations; if out, starve
-    /// (morale + HP attrition, then a casualty). Deterministic per tick.
+    /// Per-tick away-team upkeep:
+    /// - No squad (crew == 0): nothing.
+    /// - Docked with squad: morale recovers toward max.
+    /// - Away with squad: eat ship Rations; starve if out (morale + HP attrition,
+    ///   then a casualty). Deterministic per tick.
     fn tick_away_team(&mut self, world: &World) {
         let tuning = world.tuning;
-        if self.expedition.away_team.crew == 0 || !self.away() {
+        if self.expedition.away_team.crew == 0 {
             return;
         }
+        if !self.away() {
+            // Docked with a committed squad: morale recovery.
+            self.expedition.away_team.morale = (self.expedition.away_team.morale
+                + tuning.morale_recover_per_tick)
+                .min(tuning.morale_max);
+            return;
+        }
+        // Away: Rations billing.
         let need = self.expedition.away_team.crew as f64 * tuning.marine_ration_upkeep;
         let have = self
             .expedition
@@ -3167,5 +3182,67 @@ mod tests {
         assert!(s.apply(&w, Action::SetAwayCrew { delta: -1 }).is_ok());
         assert_eq!(s.expedition.away_team.crew, 1);
         assert_eq!(s.crew.idle(), 3);
+    }
+
+    /// Task 9: arriving HOME releases the away-team back to idle; a docked squad
+    /// below max morale recovers morale each tick.
+    #[test]
+    fn return_home_releases_away_team_and_morale_recovers_while_docked() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 42);
+
+        // Commit 3 crew to the away-team while docked.
+        s.crew.total = 4;
+        s.apply(&w, Action::SetAwayCrew { delta: 3 }).unwrap();
+        assert_eq!(s.crew.away, 3);
+        assert_eq!(s.expedition.away_team.crew, 3);
+
+        // Simulate being away (ship in transit back to HOME).
+        // We skip an actual Jump and manually drive transit completion:
+        // put the ship in transit-to-HOME with 1 tick remaining.
+        s.expedition.activity = Some(crate::expedition::Activity::Transit {
+            to: crate::galaxy::HOME,
+            ticks: 1,
+        });
+        s.expedition.location = crate::galaxy::SystemId(1); // pretend we left home
+
+        // Advance 1 tick: transit completes, ship arrives at HOME.
+        s.advance(&w, 1);
+
+        // Ship is now back at HOME, activity cleared, away-team dissolved.
+        assert_eq!(s.expedition.location, crate::galaxy::HOME);
+        assert!(s.expedition.activity.is_none());
+        assert_eq!(
+            s.crew.away, 0,
+            "away crew released back to idle on return home"
+        );
+        assert_eq!(
+            s.expedition.away_team.crew, 0,
+            "AwayTeam dissolved after return home"
+        );
+        // The 3 survivors rejoin idle (total unchanged since nobody died).
+        assert_eq!(s.crew.idle(), s.crew.total, "all crew are idle again");
+
+        // — Morale recovery while docked with a committed squad —
+        // Re-commit 2 crew with low morale while docked.
+        s.apply(&w, Action::SetAwayCrew { delta: 2 }).unwrap();
+        // Artificially lower morale below max.
+        let low_morale = t.morale_max * 0.5;
+        s.expedition.away_team.morale = low_morale;
+
+        // Advance a few ticks while still docked (NOT away).
+        assert!(!s.away(), "must be docked for morale recovery");
+        let ticks = 10u64;
+        s.advance(&w, ticks);
+
+        let expected_morale =
+            (low_morale + t.morale_recover_per_tick * ticks as f64).min(t.morale_max);
+        assert!(
+            (s.expedition.away_team.morale - expected_morale).abs() < 1e-9,
+            "morale recovered while docked: got {}, expected {}",
+            s.expedition.away_team.morale,
+            expected_morale
+        );
     }
 }
