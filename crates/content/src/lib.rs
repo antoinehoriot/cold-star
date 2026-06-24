@@ -210,6 +210,59 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "surface_layer_max must be >= surface_layer_min >= 1".into(),
         ));
     }
+    // CB1 — combat float fields: finite >= 0
+    for (name, v) in [
+        ("marine_hp", t.marine_hp),
+        ("marine_atk", t.marine_atk),
+        ("marine_def_base", t.marine_def_base),
+        ("marine_ration_upkeep", t.marine_ration_upkeep),
+        ("morale_rout", t.morale_rout),
+        ("morale_per_death", t.morale_per_death),
+        ("morale_per_flee", t.morale_per_flee),
+        ("morale_per_starve_tick", t.morale_per_starve_tick),
+        ("morale_recover_per_tick", t.morale_recover_per_tick),
+        ("starve_hp_per_tick", t.starve_hp_per_tick),
+        ("weapon_step", t.weapon_step),
+        ("armor_hp_step", t.armor_hp_step),
+        ("armor_def_step", t.armor_def_step),
+        ("medgel_heal", t.medgel_heal),
+        ("grenade_damage", t.grenade_damage),
+        ("shield_def", t.shield_def),
+        ("stance_atk_mult", t.stance_atk_mult),
+        ("stance_def_bonus", t.stance_def_bonus),
+        ("remnant_hp", t.remnant_hp),
+        ("remnant_atk", t.remnant_atk),
+        ("remnant_def", t.remnant_def),
+        ("remnant_speed", t.remnant_speed),
+        ("remnant_components", t.remnant_components),
+        ("remnant_data", t.remnant_data),
+        ("combat_depth_mult", t.combat_depth_mult),
+        ("flee_satchel_loss_frac", t.flee_satchel_loss_frac),
+        ("weapon_upgrade_alloy", t.weapon_upgrade_alloy),
+        ("weapon_upgrade_components", t.weapon_upgrade_components),
+        ("armor_upgrade_alloy", t.armor_upgrade_alloy),
+        ("armor_upgrade_components", t.armor_upgrade_components),
+        ("medgel_cost", t.medgel_cost),
+        ("grenade_cost", t.grenade_cost),
+        ("shield_cost", t.shield_cost),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
+    if !t.morale_max.is_finite() || t.morale_max <= 0.0 {
+        return Err(ContentError::Invalid(
+            "morale_max must be finite > 0".into(),
+        ));
+    }
+    if t.shield_ticks < 1 {
+        return Err(ContentError::Invalid("shield_ticks must be >= 1".into()));
+    }
+    if !t.morale_floor.is_finite() || t.morale_floor <= 0.0 || t.morale_floor > 1.0 {
+        return Err(ContentError::Invalid(
+            "morale_floor must be finite in (0, 1]".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -679,5 +732,21 @@ mod tests {
         assert_eq!(t.surface_ruin_data, 10.0);
         assert_eq!(t.surface_life_harvest, 22.0);
         assert_eq!(t.planet_site_weight, 0.5);
+    }
+
+    #[test]
+    fn loads_cb1_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.marine_hp, 30.0);
+        assert_eq!(t.marine_atk, 6.0);
+        assert_eq!(t.morale_max, 100.0);
+        assert_eq!(t.morale_rout, 20.0);
+        assert_eq!(t.weapon_step, 0.5);
+        assert_eq!(t.medgel_heal, 25.0);
+        assert_eq!(t.grenade_damage, 40.0);
+        assert_eq!(t.shield_ticks, 5);
+        assert_eq!(t.remnant_hp, 60.0);
+        assert_eq!(t.flee_satchel_loss_frac, 0.25);
+        assert_eq!(t.medgel_cost, 5.0);
     }
 }
