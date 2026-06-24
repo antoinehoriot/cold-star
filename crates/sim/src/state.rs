@@ -1280,10 +1280,8 @@ impl GameState {
                 if alien.kind != crate::alien::AlienKind::Fauna {
                     return Err(Rejected("that is not an animal"));
                 }
-                let (system, site_idx, biome, node) = (l.system, l.site_idx, l.biome, l.node);
-                // Depth not used in the Harvest yield formula (harvest_fauna_yield * grad),
-                // but we surface_site to ensure the node exists before reborrowng as_mut.
-                let _ = self.surface_site(world, system, site_idx, biome).get(node);
+                let (system, site_idx, node) = (l.system, l.site_idx, l.node);
+                // Yield is harvest_fauna_yield * grad; depth is not used here.
                 let galaxy = self.galaxy(world);
                 let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
                     (Some(h), Some(s)) => {
