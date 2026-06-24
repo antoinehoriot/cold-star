@@ -152,6 +152,15 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .bar-suit > span { background: #6fd6a0; }
 .surf-here { font-size: .85rem; color: #c7d3dd; margin: .3rem 0; }
 .surf-choice { border-left: 2px solid #5a4a26; padding-left: .6rem; margin: .4rem 0; }
+.surfmap { width: 100%; height: 180px; display: block; margin: .4rem 0;
+  background: radial-gradient(circle at 50% 50%, #0a1810 0%, #070b08 70%); border: 1px solid #1d4a30; border-radius: 5px; }
+.surf-edge { stroke: #234; stroke-width: .6; }
+.surf-node { cursor: pointer; stroke: #05070a; stroke-width: .6; }
+.surf-current { fill: #6fd6a0; }
+.surf-reach { fill: #6fb7d6; }
+.surf-done { fill: #2a3a30; }
+.surf-far { fill: #3a4a44; }
+.kind-Hazard { stroke: #e0a24a; stroke-width: 1; }
 ";
 
 #[component]
@@ -564,6 +573,42 @@ fn SurfaceView(
 ) -> Element {
     let suit_pct = (vm.suit / vm.suit_max * 100.0).clamp(0.0, 100.0);
     let busy = vm.traverse > 0;
+
+    // Layout nodes by depth (x) and band position (y).
+    let max_depth = vm.nodes.iter().map(|n| n.depth).max().unwrap_or(0).max(1);
+    let mut by_depth: std::collections::BTreeMap<u32, Vec<&SurfaceNodeVM>> = Default::default();
+    for n in &vm.nodes {
+        by_depth.entry(n.depth).or_default().push(n);
+    }
+    let max_band = by_depth.values().map(|v| v.len()).max().unwrap_or(1).max(1);
+    let placed: Vec<(SurfaceNodeVM, f64, f64)> = by_depth
+        .iter()
+        .flat_map(|(d, band)| {
+            let n = band.len();
+            band.iter()
+                .enumerate()
+                .map(move |(i, node)| {
+                    let x = 10.0 + (*d as f64) * (80.0 / max_depth as f64);
+                    let y = 10.0 + (i as f64 + 0.5) * (80.0 / n as f64);
+                    ((*node).clone(), x, y)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let view = format!("0 0 100 {}", 20.0 + max_band as f64 * 10.0);
+
+    // Current node's edge set — determines which nodes are clickable to Move.
+    let cur_edges: Vec<u32> = vm
+        .nodes
+        .iter()
+        .find(|n| n.is_current)
+        .map(|n| n.edges.clone())
+        .unwrap_or_default();
+
+    // Build a lookup from node id to (x, y) for drawing edges.
+    let pos_map: std::collections::HashMap<u32, (f64, f64)> =
+        placed.iter().map(|(n, x, y)| (n.id, (*x, *y))).collect();
+
     rsx! {
         div { class: "panel surface",
             div { class: "panel-title", "SURFACE \u{00b7} {vm.biome}" }
@@ -583,13 +628,65 @@ fn SurfaceView(
                     button { class: "act", onclick: move |_| on_leave.call(()), "Leave it" }
                 }
             } else {
-                div { class: "panel-title", "DESCEND" }
-                if vm.neighbors.is_empty() { div { class: "muted", "Nowhere deeper. Extract." } }
-                for (id, kind, resolved) in vm.neighbors.clone() {
-                    div { class: "nav-site",
-                        span { "{kind}" if resolved { span { class: "muted", " \u{00b7} stripped" } } }
-                        button { class: "mini", disabled: busy, onclick: move |_| on_move.call(id), "go" }
+                // SVG node-graph map replacing the text DESCEND list.
+                svg {
+                    class: "surfmap",
+                    view_box: "{view}",
+                    preserve_aspect_ratio: "xMidYMid meet",
+                    // Edges — draw between placed nodes that share an edge.
+                    for (node, x1v, y1v) in placed.clone() {
+                        for eid in node.edges.clone() {
+                            if let Some((x2v, y2v)) = pos_map.get(&eid) {
+                                line {
+                                    x1: "{x1v}",
+                                    y1: "{y1v}",
+                                    x2: "{x2v}",
+                                    y2: "{y2v}",
+                                    class: "surf-edge",
+                                }
+                            }
+                        }
                     }
+                    // Node circles.
+                    for (node, xv, yv) in placed.clone() {
+                        {
+                            let id = node.id;
+                            let reachable = cur_edges.contains(&id);
+                            let node_class = {
+                                let mut c = "surf-node".to_string();
+                                if node.is_current {
+                                    c.push_str(" surf-current");
+                                } else if reachable {
+                                    c.push_str(" surf-reach");
+                                } else if node.resolved {
+                                    c.push_str(" surf-done");
+                                } else {
+                                    c.push_str(" surf-far");
+                                }
+                                if node.kind == "Hazard" {
+                                    c.push_str(" kind-Hazard");
+                                }
+                                c
+                            };
+                            let r_val = if node.is_current { "4" } else { "3" };
+                            rsx! {
+                                circle {
+                                    cx: "{xv}",
+                                    cy: "{yv}",
+                                    r: "{r_val}",
+                                    class: "{node_class}",
+                                    onclick: move |_| {
+                                        if reachable && !busy {
+                                            on_move.call(id);
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+                if cur_edges.is_empty() {
+                    div { class: "muted", "Nowhere deeper. Extract." }
                 }
             }
             button { class: "act ghost", onclick: move |_| on_extract.call(()), "Extract to orbit" }
@@ -1023,7 +1120,6 @@ fn Console(
             nodes,
         }
     });
-    let _landed = landing_vm.is_some();
     drop(snapshot);
 
     let mut act = move |action: Action| {
