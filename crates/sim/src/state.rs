@@ -999,6 +999,11 @@ impl GameState {
                     self.crew.release_away(removed);
                     self.expedition.away_team.crew -= removed;
                     self.expedition.away_team.hp = self.squad_hp_max(tuning);
+                    // Fully disbanded: reset so the next commit re-inits a fresh squad.
+                    if self.expedition.away_team.crew == 0 {
+                        self.expedition.away_team.morale = 0.0;
+                        self.expedition.away_team.hp = 0.0;
+                    }
                 }
                 Ok(())
             }
