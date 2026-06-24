@@ -34,6 +34,13 @@ struct SurfaceNodeVM {
 }
 
 #[derive(Clone, PartialEq)]
+struct CombatVM {
+    enemy_hp: f64,
+    stance: String,
+    shield_ticks: u32,
+}
+
+#[derive(Clone, PartialEq)]
 struct LandingVM {
     biome: String,
     suit: f64,
@@ -46,6 +53,13 @@ struct LandingVM {
     traverse: u32,
     neighbors: Vec<(u32, String, bool)>,
     nodes: Vec<SurfaceNodeVM>,
+    away_crew: u32,
+    squad_hp: f64,
+    squad_hp_max: f64,
+    morale: f64,
+    morale_max: f64,
+    combat: Option<CombatVM>,
+    consumables: Vec<(sim::gear::ConsumableKind, String, u32)>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -172,6 +186,11 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .surf-done { fill: #2a3a30; }
 .surf-far { fill: #3a4a44; }
 .kind-Hazard { stroke: #e0a24a; stroke-width: 1; }
+.combat { border: 1px solid #5a2626; border-radius: 5px; padding: .6rem .8rem; margin: .4rem 0; background: #140808; }
+.bar-enemy > span { background: #d66f6f; }
+.bar-hp > span { background: #6fd6a0; }
+.bar-morale > span { background: #6f9fd6; }
+.combat-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; align-items: center; }
 ";
 
 #[component]
@@ -581,6 +600,9 @@ fn SurfaceView(
     on_harvest: EventHandler<()>,
     on_leave: EventHandler<()>,
     on_extract: EventHandler<()>,
+    on_use_consumable: EventHandler<sim::gear::ConsumableKind>,
+    on_stance: EventHandler<()>,
+    on_flee: EventHandler<()>,
 ) -> Element {
     let suit_pct = (vm.suit / vm.suit_max * 100.0).clamp(0.0, 100.0);
     let busy = vm.traverse > 0;
@@ -635,6 +657,17 @@ fn SurfaceView(
     let pos_map: std::collections::HashMap<u32, (f64, f64)> =
         placed.iter().map(|(n, x, y)| (n.id, (*x, *y))).collect();
 
+    let squad_hp_pct = if vm.squad_hp_max > 0.0 {
+        (vm.squad_hp / vm.squad_hp_max * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let morale_pct = if vm.morale_max > 0.0 {
+        (vm.morale / vm.morale_max * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+
     rsx! {
         div { class: "panel surface",
             div { class: "panel-title", "SURFACE \u{00b7} {vm.biome}" }
@@ -647,7 +680,29 @@ fn SurfaceView(
             for (name, amt) in vm.satchel.clone() {
                 div { class: "res-row", span { "{name}" } span { "{amt:.0}" } }
             }
-            if vm.pending_choice {
+            if let Some(c) = vm.combat.clone() {
+                div { class: "combat",
+                    div { class: "panel-title", "CONTACT \u{2014} REMNANT" }
+                    div { class: "muted", "Enemy hull {c.enemy_hp:.0}" }
+                    div { class: "bar bar-enemy", span { style: "width: {(c.enemy_hp).clamp(0.0,100.0)}%" } }
+                    div { class: "muted", "Squad \u{00d7}{vm.away_crew}  \u{00b7}  HP {vm.squad_hp:.0}/{vm.squad_hp_max:.0}  \u{00b7}  morale {vm.morale:.0}" }
+                    div { class: "bar bar-hp", span { style: "width: {squad_hp_pct}%" } }
+                    div { class: "bar bar-morale", span { style: "width: {morale_pct}%" } }
+                    if c.shield_ticks > 0 { div { class: "muted", "shield {c.shield_ticks}s" } }
+                    div { class: "combat-actions",
+                        button { class: "mini", onclick: move |_| on_stance.call(()), "stance: {c.stance}" }
+                        for (kind, label, count) in vm.consumables.clone() {
+                            {
+                                let kind = kind;
+                                rsx! {
+                                    button { class: "mini", disabled: count == 0, onclick: move |_| on_use_consumable.call(kind), "{label} ({count})" }
+                                }
+                            }
+                        }
+                        button { class: "act", onclick: move |_| on_flee.call(()), "Flee" }
+                    }
+                }
+            } else if vm.pending_choice {
                 div { class: "surf-choice",
                     div { class: "muted", "Something living. It has not noticed you yet." }
                     button { class: "act", onclick: move |_| on_harvest.call(()), "Harvest it" }
@@ -1186,6 +1241,35 @@ fn Console(
             traverse: l.traverse,
             neighbors,
             nodes,
+            away_crew: gs.expedition.away_team.crew,
+            squad_hp: gs.expedition.away_team.hp,
+            squad_hp_max: gs.expedition.away_team.crew as f64
+                * tn.marine_hp
+                * (1.0 + gs.gear.armor_tier as f64 * tn.armor_hp_step),
+            morale: gs.expedition.away_team.morale,
+            morale_max: tn.morale_max,
+            combat: l.combat.as_ref().map(|c| CombatVM {
+                enemy_hp: c.enemy_hp,
+                stance: format!("{:?}", c.stance),
+                shield_ticks: c.shield_ticks,
+            }),
+            consumables: {
+                use sim::gear::ConsumableKind::*;
+                [
+                    (MedGel, "Med-gel"),
+                    (Grenade, "Grenade"),
+                    (Shield, "Shield"),
+                ]
+                .iter()
+                .map(|(k, label)| {
+                    (
+                        *k,
+                        label.to_string(),
+                        gs.consumables.get(k).copied().unwrap_or(0),
+                    )
+                })
+                .collect()
+            },
         }
     });
     let armory_built = gs.built_count(sim::module::ModuleId::Armory) > 0;
@@ -1322,6 +1406,36 @@ fn Console(
                             let tc = TechRegistry(techs.read().clone());
                             let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                             if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Extract); }
+                        },
+                        on_use_consumable: move |kind| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UseConsumable(kind)); }
+                        },
+                        on_stance: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() {
+                                let next = match gs.expedition.landing.as_ref().and_then(|l| l.combat.as_ref()).map(|c| c.stance) {
+                                    Some(sim::combat::Stance::Aggressive) => sim::combat::Stance::Defensive,
+                                    _ => sim::combat::Stance::Aggressive,
+                                };
+                                let _ = gs.apply(&world, Action::SetStance(next));
+                            }
+                        },
+                        on_flee: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Flee); }
                         },
                     }
                 } else {
