@@ -34,6 +34,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Cumulative scrap salvaged that triggers the heavy-consumption uneasy note.
 const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
 
+/// Multiplier applied to `trade_get` when the alien is in the Curious band.
+pub const CURIOUS_TRADE_BONUS: f64 = 1.5;
+
 pub const SAVE_VERSION: u32 = 9;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
@@ -75,6 +78,8 @@ pub enum Action {
     Parley,
     Avoid,
     Observe,
+    Gift,
+    Trade,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -541,6 +546,8 @@ impl GameState {
                 | Action::Parley
                 | Action::Avoid
                 | Action::Observe
+                | Action::Gift
+                | Action::Trade
         )
     }
 
@@ -1170,6 +1177,90 @@ impl GameState {
                 self.log.push(
                     self.tick,
                     "You watch. You learn. It does not notice you.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::Gift => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                if l.alien.is_none() {
+                    return Err(Rejected("nothing there to gift"));
+                }
+                let have = self
+                    .expedition
+                    .cargo
+                    .get(&ResourceKind::Components)
+                    .copied()
+                    .unwrap_or(0.0);
+                if have < tuning.gift_cost {
+                    return Err(Rejected("not enough Components to gift"));
+                }
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Components)
+                    .or_insert(0.0) -= tuning.gift_cost;
+                if let Some(l) = self.expedition.landing.as_mut()
+                    && let Some(a) = l.alien.as_mut()
+                {
+                    a.disposition += tuning.gift_shift;
+                }
+                self.log.push(
+                    self.tick,
+                    "You set the materials down and step back. A gesture older than language.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::Trade => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                let alien = match l.alien.as_ref() {
+                    Some(a) => a.clone(),
+                    None => return Err(Rejected("they have nothing to trade")),
+                };
+                if alien.kind != crate::alien::AlienKind::Peer {
+                    return Err(Rejected("they have nothing to trade"));
+                }
+                let b = crate::alien::band(alien.disposition, tuning);
+                if b == crate::alien::Band::Hostile || b == crate::alien::Band::Fearful {
+                    return Err(Rejected("they will not deal"));
+                }
+                let have = self
+                    .expedition
+                    .cargo
+                    .get(&ResourceKind::Components)
+                    .copied()
+                    .unwrap_or(0.0);
+                if have < tuning.trade_give {
+                    return Err(Rejected("not enough Components to trade"));
+                }
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Components)
+                    .or_insert(0.0) -= tuning.trade_give;
+                let gain = if b == crate::alien::Band::Curious {
+                    tuning.trade_get * CURIOUS_TRADE_BONUS
+                } else {
+                    tuning.trade_get
+                };
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Isotopes)
+                    .or_insert(0.0) += gain;
+                if let Some(l) = self.expedition.landing.as_mut()
+                    && let Some(a) = l.alien.as_mut()
+                {
+                    a.disposition += tuning.trade_disp_shift;
+                }
+                self.log.push(
+                    self.tick,
+                    "You exchange what you have for what they carry. Neither of you speaks.",
                     tuning.log_capacity,
                 );
                 Ok(())
@@ -3507,5 +3598,104 @@ mod tests {
         );
         s.apply(&w, Action::Avoid).unwrap();
         assert!(s.expedition.landing.as_ref().unwrap().alien.is_none());
+    }
+
+    #[test]
+    fn gift_de_escalates_trade_swaps() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Ruined);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        // Hostile peer + Components to gift.
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Peer,
+            disposition: -60.0,
+        });
+        s.expedition.cargo.insert(ResourceKind::Components, 100.0);
+        s.apply(&w, Action::Gift).unwrap();
+        assert!(
+            s.expedition
+                .landing
+                .as_ref()
+                .unwrap()
+                .alien
+                .as_ref()
+                .unwrap()
+                .disposition
+                > -60.0
+        );
+
+        // — Trade leg: Curious peer, verify cargo swap + disposition rise —
+        // Set disposition to Curious band (>= disp_curious = 30.0).
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Peer,
+            disposition: 35.0,
+        });
+        let comp_before = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Components)
+            .copied()
+            .unwrap_or(0.0);
+        let iso_before = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Isotopes)
+            .copied()
+            .unwrap_or(0.0);
+        let disp_before = s
+            .expedition
+            .landing
+            .as_ref()
+            .unwrap()
+            .alien
+            .as_ref()
+            .unwrap()
+            .disposition;
+        s.apply(&w, Action::Trade).unwrap();
+        let comp_after = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Components)
+            .copied()
+            .unwrap_or(0.0);
+        let iso_after = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Isotopes)
+            .copied()
+            .unwrap_or(0.0);
+        let disp_after = s
+            .expedition
+            .landing
+            .as_ref()
+            .unwrap()
+            .alien
+            .as_ref()
+            .unwrap()
+            .disposition;
+        assert!(
+            comp_after < comp_before,
+            "Components should decrease after Trade"
+        );
+        assert!(
+            iso_after > iso_before,
+            "Isotopes should increase after Trade"
+        );
+        assert!(
+            disp_after > disp_before,
+            "Disposition should rise after Trade"
+        );
+        // Curious band: isotope gain = trade_get * CURIOUS_TRADE_BONUS
+        let expected_iso_gain = t.trade_get * crate::state::CURIOUS_TRADE_BONUS;
+        assert!(
+            (iso_after - iso_before - expected_iso_gain).abs() < 1e-9,
+            "Curious trade bonus not applied correctly: got {}, expected {}",
+            iso_after - iso_before,
+            expected_iso_gain
+        );
     }
 }
