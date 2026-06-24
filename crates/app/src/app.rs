@@ -107,6 +107,19 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
   color: #e0a24a; font-size: .82rem; letter-spacing: .12em; background: #140d05; }
 .nav-wrap { margin-bottom: 1.2rem; }
 .dimmed { opacity: .4; pointer-events: none; filter: grayscale(.3); transition: opacity .3s; }
+.navmap { width: 100%; height: 240px; display: block; margin: .4rem 0 .6rem;
+  background: radial-gradient(circle at 50% 50%, #0a141c 0%, #070b10 70%); border: 1px solid #16313f; border-radius: 5px; }
+.range-ring { fill: rgba(111,183,214,.05); stroke: #2f6a80; stroke-width: .5; stroke-dasharray: 2 2; }
+.nav-edge { stroke: #16313f; stroke-width: .4; }
+.sys { cursor: pointer; stroke: #05070a; stroke-width: .6; }
+.sys-current { fill: #6fd6a0; }
+.sys-reachable { fill: #6fb7d6; }
+.sys-far { fill: #3a4a55; }
+.sys-selected { stroke: #d8e6ef; stroke-width: 1.2; }
+.star-Neutron { }
+.star-Dead { }
+.navmap circle.sys:hover { stroke: #9fd0e6; stroke-width: 1.2; }
+.nav-detail { border-top: 1px solid #16313f; padding-top: .4rem; }
 ";
 
 #[component]
@@ -378,6 +391,14 @@ fn NavigationPanel(
     on_scavenge: EventHandler<()>,
     on_upgrade: EventHandler<()>,
 ) -> Element {
+    let mut selected = use_signal(|| current);
+    // Center on the current system's position.
+    let center = rows.iter().find(|r| r.is_current).map(|r| r.pos).unwrap_or((0.0, 0.0));
+    // viewBox half-extent: fit the drive ring + a margin (clamped so a huge drive still renders).
+    let half = (drive * 1.25).clamp(30.0, 140.0);
+    let view = format!("{} {} {} {}", -half, -half, 2.0 * half, 2.0 * half);
+    let sel = selected();
+    let sel_row = rows.iter().find(|r| r.id == sel).cloned();
     rsx! {
         div { class: "panel",
             div { class: "panel-title", "NAVIGATION" }
@@ -391,30 +412,81 @@ fn NavigationPanel(
             if can_upgrade_drive {
                 button { class: "act", onclick: move |_| on_upgrade.call(()), "Recalibrate drive (+range)" }
             }
-            // System list (replaced by the SVG map in a later task).
-            for row in rows {
-                div { class: "nav-row",
-                    span {
-                        if row.is_current { span { class: "nav-here", "\u{25c9} " } }
-                        "Sys {row.id.0} \u{00b7} {row.star} \u{00b7} {row.dist:.0} ly"
-                        if row.scanned { span { class: "muted", " \u{00b7} scanned" } }
+            // SVG star map.
+            svg {
+                class: "navmap",
+                view_box: "{view}",
+                preserve_aspect_ratio: "xMidYMid meet",
+                // range ring
+                circle { cx: 0, cy: 0, r: "{drive}", class: "range-ring" }
+                // edges from current to reachable systems (subtle)
+                for row in rows.iter().filter(|r| r.reachable) {
+                    line {
+                        x1: 0, y1: 0,
+                        x2: "{row.pos.0 - center.0}", y2: "{row.pos.1 - center.1}",
+                        class: "nav-edge",
                     }
-                    span {
-                        if !row.is_current && has_sensor && !row.scanned {
-                            button { class: "mini", disabled: busy, onclick: move |_| on_scan.call(row.id), "scan" }
-                        }
-                        if row.reachable {
-                            button { class: "mini", disabled: busy || !row.affordable, onclick: move |_| on_jump.call(row.id), "jump" }
+                }
+                // system dots
+                for row in rows.clone() {
+                    {
+                        let id = row.id;
+                        let dot_class = {
+                            let mut c = format!("sys star-{}", row.star);
+                            if row.is_current { c.push_str(" sys-current"); }
+                            else if row.reachable { c.push_str(" sys-reachable"); }
+                            else { c.push_str(" sys-far"); }
+                            if sel == row.id { c.push_str(" sys-selected"); }
+                            c
+                        };
+                        let r_val = if row.is_current { "4.5" } else { "3.2" };
+                        let cx_val = format!("{}", row.pos.0 - center.0);
+                        let cy_val = format!("{}", row.pos.1 - center.1);
+                        rsx! {
+                            circle {
+                                cx: "{cx_val}",
+                                cy: "{cy_val}",
+                                r: "{r_val}",
+                                class: "{dot_class}",
+                                onclick: move |_| selected.set(id),
+                            }
                         }
                     }
                 }
-                // Sites at this system (resolve buttons).
-                for (idx, kind, depleted) in row.sites.clone() {
-                    div { class: "nav-site",
-                        span { "{kind}" if depleted { span { class: "muted", " \u{00b7} stripped" } } }
-                        if row.is_current && !depleted {
-                            button { class: "mini", disabled: busy, onclick: move |_| on_resolve.call((row.id, idx)), "work" }
+            }
+            // Detail + actions for the selected system.
+            if let Some(row) = sel_row {
+                div { class: "nav-detail",
+                    div { class: "nav-row",
+                        span {
+                            if row.is_current { span { class: "nav-here", "\u{25c9} " } }
+                            "Sys {row.id.0} \u{00b7} {row.star} \u{00b7} {row.dist:.0} ly"
+                            if row.scanned { span { class: "muted", " \u{00b7} scanned" } } else { span { class: "muted", " \u{00b7} unscanned" } }
                         }
+                        span {
+                            if !row.is_current && has_sensor && !row.scanned {
+                                button { class: "mini", disabled: busy, onclick: move |_| on_scan.call(row.id), "scan" }
+                            }
+                            if row.reachable {
+                                button {
+                                    class: "mini",
+                                    disabled: busy || !row.affordable,
+                                    onclick: move |_| on_jump.call(row.id),
+                                    if row.affordable { "jump ({row.cost:.0} fuel)" } else { "jump (low fuel)" }
+                                }
+                            }
+                        }
+                    }
+                    for (idx, kind, depleted) in row.sites.clone() {
+                        div { class: "nav-site",
+                            span { "{kind}" if depleted { span { class: "muted", " \u{00b7} stripped" } } }
+                            if row.is_current && !depleted {
+                                button { class: "mini", disabled: busy, onclick: move |_| on_resolve.call((row.id, idx)), "work" }
+                            }
+                        }
+                    }
+                    if !row.scanned && row.sites.is_empty() {
+                        div { class: "muted", "Scan to reveal what's here." }
                     }
                 }
             }
