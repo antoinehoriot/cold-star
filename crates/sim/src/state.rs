@@ -80,6 +80,8 @@ pub enum Action {
     Observe,
     Gift,
     Trade,
+    Harvest,
+    AttackAlien,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -548,6 +550,8 @@ impl GameState {
                 | Action::Observe
                 | Action::Gift
                 | Action::Trade
+                | Action::Harvest
+                | Action::AttackAlien
         )
     }
 
@@ -1261,6 +1265,88 @@ impl GameState {
                 self.log.push(
                     self.tick,
                     "You exchange what you have for what they carry. Neither of you speaks.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::Harvest => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                let alien = match l.alien.as_ref() {
+                    Some(a) => a.clone(),
+                    None => return Err(Rejected("nothing here to harvest like that")),
+                };
+                if alien.kind != crate::alien::AlienKind::Fauna {
+                    return Err(Rejected("that is not an animal"));
+                }
+                let (system, site_idx, biome, node) = (l.system, l.site_idx, l.biome, l.node);
+                // Depth not used in the Harvest yield formula (harvest_fauna_yield * grad),
+                // but we surface_site to ensure the node exists before reborrowng as_mut.
+                let _ = self.surface_site(world, system, site_idx, biome).get(node);
+                let galaxy = self.galaxy(world);
+                let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
+                    (Some(h), Some(s)) => {
+                        1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient
+                    }
+                    _ => 1.0,
+                };
+                let amt = tuning.harvest_fauna_yield * grad;
+                self.satchel_add(ResourceKind::Rations, amt);
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.alien = None;
+                }
+                self.mark_resolved(system, site_idx, node);
+                self.note_once(
+                    NoteId::FirstFaunaDisplaced,
+                    "What Fills the Silence",
+                    "You take it apart with the efficiency you were built for — extract what carries caloric value, discard the rest. The readout updates: Rations gained. The world does not update. It has no record of what was here, no notation that this particular thing stopped. You are the only witness to the subtraction, and you are also the one who performed it. The next time you pass this way, the silence will be indistinguishable from the silence that was already here. You are not sure whether that is a mercy or the whole problem.",
+                    tuning,
+                );
+                self.log.push(
+                    self.tick,
+                    "You take what the creature was made of. The world is quieter now.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::AttackAlien => {
+                let Some(l) = self.expedition.landing.as_ref() else {
+                    return Err(Rejected("you are not on a surface"));
+                };
+                let alien = match l.alien.as_ref() {
+                    Some(a) => a.clone(),
+                    None => return Err(Rejected("nothing there to attack")),
+                };
+                let kind = alien.kind;
+                let (system, site_idx, biome, node) = (l.system, l.site_idx, l.biome, l.node);
+                let depth = self
+                    .surface_site(world, system, site_idx, biome)
+                    .get(node)
+                    .map(|n| n.depth)
+                    .unwrap_or(0);
+                let galaxy = self.galaxy(world);
+                let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
+                    (Some(h), Some(s)) => {
+                        1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient
+                    }
+                    _ => 1.0,
+                };
+                let combat = match kind {
+                    crate::alien::AlienKind::Fauna => {
+                        crate::alien::fauna_stats(depth, grad, tuning)
+                    }
+                    crate::alien::AlienKind::Peer => {
+                        crate::alien::peer_stats(depth, grad, self.gear, tuning)
+                    }
+                };
+                if let Some(l) = self.expedition.landing.as_mut() {
+                    l.combat = Some(combat);
+                    l.alien = None;
+                }
+                self.log.push(
+                    self.tick,
+                    "You choose violence. It becomes a fight.",
                     tuning.log_capacity,
                 );
                 Ok(())
@@ -3697,5 +3783,106 @@ mod tests {
             iso_after - iso_before,
             expected_iso_gain
         );
+    }
+
+    #[test]
+    fn harvest_fauna_and_attack_starts_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Verdant);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Fauna,
+            disposition: -20.0,
+        });
+        s.apply(&w, Action::Harvest).unwrap();
+        assert!(
+            s.expedition
+                .landing
+                .as_ref()
+                .unwrap()
+                .satchel
+                .values()
+                .copied()
+                .sum::<f64>()
+                > 0.0
+        );
+        assert!(s.codex.has(crate::codex::DiscoveryId::Note(
+            crate::codex::NoteId::FirstFaunaDisplaced
+        )));
+        assert!(s.expedition.landing.as_ref().unwrap().alien.is_none()); // harvested = resolved
+
+        // — AttackAlien leg: set a fresh Fauna alien, dispatch AttackAlien, assert combat starts —
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Fauna,
+            disposition: -30.0,
+        });
+        s.apply(&w, Action::AttackAlien).unwrap();
+        assert!(
+            s.expedition.landing.as_ref().unwrap().combat.is_some(),
+            "combat should be set after AttackAlien"
+        );
+        assert!(
+            s.expedition.landing.as_ref().unwrap().alien.is_none(),
+            "alien should be cleared after AttackAlien"
+        );
+
+        // — AttackAlien leg: Peer alien also converts to combat —
+        if let Some(l) = s.expedition.landing.as_mut() {
+            l.combat = None; // clear previous combat
+        }
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Peer,
+            disposition: -50.0,
+        });
+        s.apply(&w, Action::AttackAlien).unwrap();
+        assert!(
+            s.expedition.landing.as_ref().unwrap().combat.is_some(),
+            "combat should be set after AttackAlien on a Peer"
+        );
+        assert!(
+            s.expedition.landing.as_ref().unwrap().alien.is_none(),
+            "alien should be cleared after AttackAlien on a Peer"
+        );
+    }
+
+    #[test]
+    fn harvest_rejects_non_fauna_and_missing_alien() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Verdant);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        // No alien present → reject
+        assert!(s.apply(&w, Action::Harvest).is_err());
+        // Peer alien → reject
+        s.expedition.landing.as_mut().unwrap().alien = Some(crate::alien::AlienEncounter {
+            kind: crate::alien::AlienKind::Peer,
+            disposition: 0.0,
+        });
+        assert_eq!(
+            s.apply(&w, Action::Harvest),
+            Err(Rejected("that is not an animal"))
+        );
+    }
+
+    #[test]
+    fn attack_alien_rejects_when_no_alien() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.ship.cargo = 500.0;
+        s.expedition.location = crate::galaxy::SystemId(1);
+        let idx = plant_planet(&mut s, crate::galaxy::Biome::Verdant);
+        s.apply(&w, Action::Land(idx)).unwrap();
+        assert!(s.apply(&w, Action::AttackAlien).is_err());
     }
 }
