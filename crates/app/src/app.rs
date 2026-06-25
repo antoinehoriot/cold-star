@@ -728,25 +728,71 @@ body {
 /* ---- Ship contact */
 .contact         { border: 1px solid color-mix(in oklab, var(--fail), var(--line) 60%); }
 .contact-actions { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.contact-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: .85rem;
+  padding: .18rem 0;
+}
 
 /* ---- Ship munitions */
 .munitions { margin-top: 1rem; }
 
-/* ---- Endgame */
-.endgame {
+/* ---- Word-drift inline marker */
+.drift {
+  color: var(--accent);
+  border-bottom: 1px dotted color-mix(in oklab, var(--accent), transparent 55%);
+}
+
+/* ---- Endgame (legacy kept for endgame-body / endgame-choices) */
+.endgame-body          { white-space: pre-wrap; line-height: 1.6; color: var(--text); margin: .6rem 0 1rem; }
+.endgame-complete      { font-family: var(--display); letter-spacing: .25em; margin-bottom: 1rem; color: var(--accent); font-size: .78rem; }
+.endgame-choices       { display: flex; flex-direction: column; gap: .5rem; margin-top: .8rem; }
+
+/* ---- Watched takeover (endgame panel) */
+.watched {
   border: 1px solid color-mix(in oklab, var(--accent), var(--line) 40%);
   border-radius: var(--r);
-  max-width: 560px;
-  margin: 1rem auto;
-  padding: 1.5rem;
+  padding: 1.6rem 1.5rem;
   background: radial-gradient(120% 90% at 50% -10%, color-mix(in oklab, var(--accent), transparent 86%), var(--fill-2));
   box-shadow: 0 0 60px -30px var(--accent);
+  margin: .6rem 0 1rem;
 }
-.endgame-body          { white-space: pre-wrap; line-height: 1.6; color: var(--text); margin: .6rem 0 1rem; }
-.endgame-complete      { font-family: var(--display); letter-spacing: .25em; margin-bottom: 1rem; color: var(--accent); }
-.endgame-choices       { display: flex; flex-direction: column; gap: .6rem; margin-top: .8rem; }
-.endgame-choice        { text-align: left; width: 100%; }
-.endgame-choice-label  { font-family: var(--display); font-weight: 600; color: #eaf3f8; letter-spacing: .06em; font-size: 16px; }
+.watched-title {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 26px;
+  letter-spacing: .01em;
+  margin: .15em 0 .35em;
+  color: var(--text);
+}
+.watched-body {
+  color: var(--text);
+  max-width: 62ch;
+  line-height: 1.6;
+  margin: 0 0 .5rem;
+  font-size: .9rem;
+}
+/* ---- Choice buttons (endgame endings) */
+.choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  padding: .7rem 1rem;
+}
+.c-l {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: .04em;
+  color: #eaf3f8;
+}
+.c-d {
+  color: var(--muted);
+  font-size: 12.5px;
+}
 
 /* ---- Responsive */
 @media (max-width: 680px) {
@@ -1252,22 +1298,33 @@ fn ContactPanel(
     };
     rsx! {
         div { class: "panel contact",
-            div { class: "panel-title", "CONTACT \u{2014} {vm.kind}" }
-            div { class: "muted", "Hull {vm.hull:.0} / {vm.hull_max:.0}" }
+            p { class: "eyebrow", "Contact \u{00b7} {vm.kind}" }
+            // Hull readout + bar
+            div { class: "contact-stat-row",
+                span { class: "mut", "Hull" }
+                span { class: "num", "{vm.hull:.0} / {vm.hull_max:.0}" }
+            }
             div { class: "bar bar-hull", span { style: "width: {hull_pct}%" } }
             if vm.in_combat {
-                div { class: "muted", "Enemy hull {vm.enemy_hp:.0}" }
+                // Combat mode: enemy hull + actions
+                div { class: "contact-stat-row",
+                    span { class: "mut", "Enemy hull" }
+                    span { class: "num down", "{vm.enemy_hp:.0}" }
+                }
                 div { class: "bar bar-enemy", span { style: "width: {(vm.enemy_hp).clamp(0.0,100.0)}%" } }
                 div { class: "contact-actions",
-                    button { class: "mini", onclick: move |_| on_stance.call(()), "stance: {vm.stance}" }
+                    button { class: "mini", onclick: move |_| on_stance.call(()), "Stance: {vm.stance}" }
                     button { class: "mini", disabled: vm.repair_drones == 0, onclick: move |_| on_repair.call(()), "Repair drone ({vm.repair_drones})" }
                     button { class: "act", disabled: !vm.can_flee, onclick: move |_| on_flee.call(()), "Flee" }
                 }
             } else {
+                // Hail mode: disposition band + verbs (peer) or husk note
                 if vm.is_peer {
                     div { class: "neg-band band-{vm.band}", "Disposition: {vm.band} ({vm.disposition:.0})" }
                     div { class: "bar bar-disp", span { style: "width: {disp_pct}%" } }
-                    div { class: "muted", "It moves the way you move. It is deciding about you, too." }
+                    div { class: "muted", style: "margin: .35rem 0 .1rem;",
+                        "It moves the way you move. It is deciding about you, too."
+                    }
                 } else {
                     div { class: "muted", "A husk-ship. It does not answer hails." }
                 }
@@ -1293,22 +1350,31 @@ fn EndgamePanel(
     on_restart: EventHandler<()>,
 ) -> Element {
     rsx! {
-        div { class: "panel endgame",
+        div { class: "watched",
             if vm.ended {
-                div { class: "panel-title", "{vm.ending_title}" }
+                // Ended: per-origin closing note + restart
+                p { class: "eyebrow", "The record is closed" }
+                h2 { class: "watched-title", "{vm.ending_title}" }
                 div { class: "endgame-body", "{vm.ending_body}" }
-                div { class: "muted endgame-complete", "The run is complete." }
+                div { class: "endgame-complete", "The run is complete." }
                 button { class: "act", onclick: move |_| on_restart.call(()), "Begin again" }
             } else {
-                div { class: "panel-title", "THE WATCHED" }
-                div { class: "muted", "It waits. The record is open. Choose how this ends." }
+                // WatchedArrived: takeover panel — cold terminal climax
+                p { class: "eyebrow", "Contact \u{00b7} resolved out of the dark" }
+                h2 { class: "watched-title", "The Watched" }
+                p { class: "watched-body",
+                    "It does not attack. It holds position and broadcasts on a frequency your station once used too. It moves the way you move. It has watched you become this."
+                    span { class: "mut", " The ruins you stripped were stations like yours. The peers were you, at a different hour." }
+                }
+                p { class: "eyebrow", style: "margin-top: 1.1rem;", "The record is open. Choose how this ends." }
                 div { class: "endgame-choices",
                     for (e, label, desc) in vm.choices.clone() {
                         button {
-                            class: "act endgame-choice",
+                            class: "act choice",
                             onclick: move |_| on_choose.call(e),
-                            div { class: "endgame-choice-label", "{label}" }
-                            div { class: "muted", "{desc}" }
+                            span { class: "c-l", "{label}" }
+                            br {}
+                            span { class: "c-d", "{desc}" }
                         }
                     }
                 }
@@ -1559,16 +1625,22 @@ fn LoadoutPanel(
 ) -> Element {
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "AWAY-TEAM" }
+            // Away-team section
+            p { class: "eyebrow", "Away-team" }
             div { class: "job-row",
-                span { "{drift_word(DriftSlot::AwayTeam, tier)} \u{00d7}{vm.away_crew}  " span { class: "muted", "({vm.idle} idle)" } }
+                span {
+                    span { class: "drift", "{drift_word(DriftSlot::AwayTeam, tier)}" }
+                    " \u{00d7}{vm.away_crew}"
+                    span { class: "mut", "  ({vm.idle} idle)" }
+                }
                 span {
                     button { class: "mini", disabled: !can_set_crew || vm.away_crew == 0, onclick: move |_| on_set_crew.call(-1), "\u{2212}" }
                     button { class: "mini", disabled: !can_set_crew || vm.idle == 0, onclick: move |_| on_set_crew.call(1), "+" }
                 }
             }
             if !can_set_crew { div { class: "muted", "Dock to change the away-team." } }
-            div { class: "panel-title", "ARMORY" }
+            // Armory section
+            p { class: "eyebrow", style: "margin-top: .7rem;", "Armory" }
             div { class: "job-row",
                 span { "Weapon T{vm.weapon_tier}" }
                 button { class: "mini", disabled: vm.weapon_tier >= 2, onclick: move |_| on_upgrade_weapon.call(()), "upgrade" }
@@ -1606,12 +1678,22 @@ fn ShipMunitionsPanel(
 ) -> Element {
     rsx! {
         div { class: "panel munitions",
-            div { class: "panel-title", "SHIP MUNITIONS" }
-            div { class: "muted", "Hull {vm.hull:.0}/{vm.hull_max:.0}  \u{00b7}  guns T{vm.weapon_tier}  \u{00b7}  plating T{vm.plating_tier}  \u{00b7}  drones {vm.repair_drones}" }
-            div { class: "contact-actions",
-                button { class: "mini", disabled: !vm.can_upgrade_weapon, onclick: move |_| on_upgrade_weapon.call(()), "Upgrade guns" }
-                button { class: "mini", disabled: !vm.can_upgrade_plating, onclick: move |_| on_upgrade_plating.call(()), "Upgrade plating" }
-                button { class: "mini", disabled: !vm.can_craft_drone, onclick: move |_| on_craft_drone.call(()), "Craft repair drone" }
+            p { class: "eyebrow", "Ship munitions" }
+            div { class: "job-row",
+                span { "Hull" }
+                span { class: "num", "{vm.hull:.0} / {vm.hull_max:.0}" }
+            }
+            div { class: "job-row",
+                span { "Guns T{vm.weapon_tier}" }
+                button { class: "mini", disabled: !vm.can_upgrade_weapon, onclick: move |_| on_upgrade_weapon.call(()), "upgrade" }
+            }
+            div { class: "job-row",
+                span { "Plating T{vm.plating_tier}" }
+                button { class: "mini", disabled: !vm.can_upgrade_plating, onclick: move |_| on_upgrade_plating.call(()), "upgrade" }
+            }
+            div { class: "job-row",
+                span { "Repair drones \u{00d7}{vm.repair_drones}" }
+                button { class: "mini", disabled: !vm.can_craft_drone, onclick: move |_| on_craft_drone.call(()), "craft" }
             }
         }
     }
