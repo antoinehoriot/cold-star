@@ -22,6 +22,7 @@ pub enum Flag {
     NavigationKnown,
     CombatDoctrineKnown,
     XenoContactKnown,
+    MunitionsKnown,
 }
 
 #[cfg(test)]

@@ -469,6 +469,7 @@ pub fn load_techs() -> Result<TechRegistry, ContentError> {
         TechId::Navigation,
         TechId::CombatDoctrine,
         TechId::XenoContact,
+        TechId::Munitions,
     ] {
         if reg.get(want).is_none() {
             return Err(ContentError::Invalid(format!("techs.ron missing {want:?}")));
@@ -619,9 +620,9 @@ mod tests {
     }
 
     #[test]
-    fn loads_ten_techs() {
+    fn loads_eleven_techs() {
         let techs = load_techs().unwrap();
-        assert_eq!(techs.0.len(), 10);
+        assert_eq!(techs.0.len(), 11);
         // Jump Theory requires Deep Scan and sets a flag.
         let jt = techs.get(sim::research::TechId::JumpTheory).unwrap();
         assert!(jt.requires.contains(&sim::research::TechId::DeepScan));
@@ -639,6 +640,23 @@ mod tests {
             }
             assert!(!t.lore.trim().is_empty(), "{:?} missing lore", t.id);
         }
+    }
+
+    #[test]
+    fn munitions_tech_grants_munitions_known_and_requires_combat_doctrine() {
+        let techs = load_techs().unwrap();
+        let m = techs.get(sim::research::TechId::Munitions).unwrap();
+        assert!(
+            matches!(
+                m.grant,
+                sim::research::Grant::SetFlag(sim::flags::Flag::MunitionsKnown)
+            ),
+            "Munitions must grant Flag::MunitionsKnown"
+        );
+        assert!(
+            m.requires.contains(&sim::research::TechId::CombatDoctrine),
+            "Munitions must require CombatDoctrine"
+        );
     }
 
     #[test]

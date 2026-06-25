@@ -20,6 +20,8 @@ pub enum NoteId {
     FirstPeerSpared,
     FirstPeerKilled,
     FirstFaunaDisplaced,
+    FirstShipContact,
+    FirstShipCrippled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

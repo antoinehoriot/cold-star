@@ -39,4 +39,8 @@
       data_cost: 16.0, research_ticks: 50, requires: [DeepScan],
       grant: SetFlag(XenoContactKnown),
       lore: "The instruments were built to read rock and radiation. Turned the right way, they read something else — life, and not the quiet kind. Peers, maybe. The word sits uneasily. You learn its grammar anyway." ),
+    ( id: Munitions, name: "Munitions", blurb: "Arm the hull. This ship can fight back now.",
+      data_cost: 20.0, research_ticks: 60, requires: [CombatDoctrine],
+      grant: SetFlag(MunitionsKnown),
+      lore: "You turn the hull into something that can answer back — guns bolted where hull plating used to be, charge cells repurposed, a new geometry of threat. It changes what you are out here. You note that down too." ),
 ]

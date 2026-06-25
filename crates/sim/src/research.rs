@@ -20,6 +20,7 @@ pub enum TechId {
     Navigation,
     CombatDoctrine,
     XenoContact,
+    Munitions,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
