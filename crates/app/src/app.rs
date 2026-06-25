@@ -41,6 +41,20 @@ struct CombatVM {
 }
 
 #[derive(Clone, PartialEq)]
+struct NegotiationVM {
+    kind: String, // "Fauna" | "Peer"
+    is_peer: bool,
+    band: String, // "Hostile" | "Fearful" | "Neutral" | "Curious"
+    disposition: f64,
+    // disable predicates — exact duals of the engine's apply() rejections
+    can_parley: bool,
+    can_trade: bool,
+    can_gift: bool,
+    can_observe: bool,
+    can_harvest: bool,
+}
+
+#[derive(Clone, PartialEq)]
 struct LandingVM {
     biome: String,
     suit: f64,
@@ -59,6 +73,7 @@ struct LandingVM {
     morale: f64,
     morale_max: f64,
     combat: Option<CombatVM>,
+    negotiation: Option<NegotiationVM>,
     consumables: Vec<(sim::gear::ConsumableKind, String, u32)>,
 }
 
@@ -191,6 +206,14 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .bar-hp > span { background: #6fd6a0; }
 .bar-morale > span { background: #6f9fd6; }
 .combat-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; align-items: center; }
+.neg { margin-top: .6rem; border-top: 1px solid #16313f; padding-top: .6rem; }
+.neg-band { font-size: .8rem; letter-spacing: .18em; }
+.band-Hostile { color: #d66f6f; }
+.band-Fearful { color: #e0a24a; }
+.band-Neutral { color: #c7d3dd; }
+.band-Curious { color: #6fd6a0; }
+.bar-disp > span { background: #9b7fd6; }
+.neg-actions { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .4rem; }
 ";
 
 #[component]
@@ -1252,6 +1275,30 @@ fn Console(
                 enemy_hp: c.enemy_hp,
                 stance: format!("{:?}", c.stance),
                 shield_ticks: c.shield_ticks,
+            }),
+            negotiation: l.alien.as_ref().map(|a| {
+                use sim::alien::{AlienKind, Band};
+                let band = sim::alien::band(a.disposition, &tn);
+                let is_peer = a.kind == AlienKind::Peer;
+                let not_hostile = band != Band::Hostile;
+                let tradeable_band = matches!(band, Band::Neutral | Band::Curious);
+                let components = gs
+                    .expedition
+                    .cargo
+                    .get(&ResourceKind::Components)
+                    .copied()
+                    .unwrap_or(0.0);
+                NegotiationVM {
+                    kind: format!("{:?}", a.kind),
+                    is_peer,
+                    band: format!("{band:?}"),
+                    disposition: a.disposition,
+                    can_parley: not_hostile,
+                    can_trade: is_peer && tradeable_band && components >= tn.trade_give,
+                    can_gift: components >= tn.gift_cost,
+                    can_observe: !is_peer && not_hostile,
+                    can_harvest: !is_peer,
+                }
             }),
             consumables: {
                 use sim::gear::ConsumableKind::*;
