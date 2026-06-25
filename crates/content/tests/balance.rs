@@ -1104,3 +1104,149 @@ fn cb3_ship_contact_pass_fight_or_retreat() {
         s.advance(&w, 5);
     }
 }
+
+// ── M6a Task 6: ending-family balance ────────────────────────────────────────
+
+/// Helper: reach WatchedArrived via a clean Transit arrival (no contact).
+/// `peers_killed` and `peers_spared` are pre-set by the caller so the score
+/// crosses the threshold.  The target system is pre-resolved so
+/// maybe_start_contact skips and the watched fires unconditionally.
+fn reach_watched(s: &mut GameState, w: &World) {
+    let sys2 = SystemId(2);
+    s.resolved_contacts.insert(sys2.0);
+    s.expedition.activity = Some(sim::Activity::Transit { to: sys2, ticks: 1 });
+    s.advance(w, 1);
+    assert_eq!(
+        s.endgame,
+        Some(sim::Endgame::WatchedArrived),
+        "reach_watched: endgame must be WatchedArrived after the arrival"
+    );
+}
+
+/// A conqueror record (high peers_killed, zero spared, no LifeSpared note)
+/// reaches WatchedArrived and can choose only Ascendant or Cold.
+/// Communion is unavailable and rejected; ChooseEnding(Ascendant) sets Ended.
+#[test]
+fn m6a_conqueror_reaches_watched_and_can_ascend_or_cold() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+
+    let mut s = GameState::new(&w, 1);
+    // 16 kills × 8.0 = 128.0 ≥ 120.0 threshold.
+    // peers_spared = 0 → fails communion_min_spared (3) and pattern guard
+    // (LifeSpared not present) → only Ascendant + Cold available.
+    s.peers_killed = 16;
+    s.peers_spared = 0;
+
+    // Verify score is above threshold before the arrival.
+    assert!(
+        s.expansion_score(&w) >= t.watched_threshold,
+        "conqueror score must be above threshold before arrival (got {})",
+        s.expansion_score(&w)
+    );
+
+    reach_watched(&mut s, &w);
+
+    let endings = s.available_endings(&t);
+    assert!(
+        endings.contains(&sim::Ending::Ascendant),
+        "Ascendant must be available for a conqueror"
+    );
+    assert!(
+        endings.contains(&sim::Ending::Cold),
+        "Cold must always be available"
+    );
+    assert!(
+        !endings.contains(&sim::Ending::Communion),
+        "Communion must NOT be available (peers_spared < min)"
+    );
+    assert!(
+        !endings.contains(&sim::Ending::PatternBroken),
+        "PatternBroken must NOT be available (no LifeSpared note)"
+    );
+
+    // ChooseEnding(Communion) must be rejected.
+    assert!(
+        s.apply(&w, Action::ChooseEnding(sim::Ending::Communion))
+            .is_err(),
+        "ChooseEnding(Communion) must be rejected for a conqueror"
+    );
+
+    // ChooseEnding(Ascendant) must succeed and set Ended(Ascendant).
+    s.apply(&w, Action::ChooseEnding(sim::Ending::Ascendant))
+        .expect("ChooseEnding(Ascendant) must be accepted for a conqueror");
+    assert_eq!(
+        s.endgame,
+        Some(sim::Endgame::Ended(sim::Ending::Ascendant)),
+        "endgame must be Ended(Ascendant) after ChooseEnding"
+    );
+}
+
+/// A peaceful record (peers_spared ≥ min, kills ≤ max, LifeSpared note)
+/// reaches WatchedArrived and can choose Communion or PatternBroken.
+/// ChooseEnding(Communion) sets Ended(Communion).
+#[test]
+fn m6a_peaceful_run_can_commune_or_break_the_pattern() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+
+    let mut s = GameState::new(&w, 1);
+    // 16 spared × 8.0 = 128.0 ≥ 120.0 threshold.
+    // peers_killed = 0 ≤ communion_max_kills (1) and ≤ pattern_max_kills (2).
+    // peers_spared = 16 ≥ communion_min_spared (3).
+    // LifeSpared note → PatternBroken gate satisfied.
+    s.peers_spared = 16;
+    s.peers_killed = 0;
+    s.codex.add(sim::Discovery {
+        id: sim::DiscoveryId::Note(sim::NoteId::LifeSpared),
+        title: "x".into(),
+        text: "x".into(),
+        tick: 0,
+    });
+
+    // Verify score is above threshold before the arrival.
+    assert!(
+        s.expansion_score(&w) >= t.watched_threshold,
+        "peaceful score must be above threshold before arrival (got {})",
+        s.expansion_score(&w)
+    );
+
+    reach_watched(&mut s, &w);
+
+    let endings = s.available_endings(&t);
+    assert!(
+        endings.contains(&sim::Ending::Communion),
+        "Communion must be available for a peaceful run"
+    );
+    assert!(
+        endings.contains(&sim::Ending::PatternBroken),
+        "PatternBroken must be available for a peaceful run with LifeSpared"
+    );
+    assert!(
+        endings.contains(&sim::Ending::Ascendant),
+        "Ascendant must always be available"
+    );
+    assert!(
+        endings.contains(&sim::Ending::Cold),
+        "Cold must always be available"
+    );
+
+    // ChooseEnding(Communion) must succeed and set Ended(Communion).
+    s.apply(&w, Action::ChooseEnding(sim::Ending::Communion))
+        .expect("ChooseEnding(Communion) must be accepted for a peaceful run");
+    assert_eq!(
+        s.endgame,
+        Some(sim::Endgame::Ended(sim::Ending::Communion)),
+        "endgame must be Ended(Communion) after ChooseEnding"
+    );
+}

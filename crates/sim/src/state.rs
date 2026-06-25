@@ -6147,4 +6147,58 @@ mod tests {
             "Drifter and Seed must have different ending text"
         );
     }
+
+    // ── M6a Task 6: determinism through the watched arrival ───────────────────
+
+    /// Bulk advance(N) == N × advance(1) across a Transit arrival that fires
+    /// the watched.  The terminal state (WatchedArrived + all three turn notes)
+    /// must be bit-for-bit identical between both execution paths.
+    #[test]
+    fn advance_n_equals_n_times_advance_1_through_the_watched() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+
+        let setup = |s: &mut GameState| {
+            // 16 peers × 8.0 = 128.0 ≥ 120.0 threshold — above from tick 0.
+            s.peers_killed = 16;
+            let sys1 = crate::galaxy::SystemId(1);
+            // Pre-resolve so maybe_start_contact skips; contact suppression
+            // would prevent the watched from firing.
+            s.resolved_contacts.insert(sys1.0);
+            // Transit arrives in exactly 1 tick.
+            s.expedition.activity =
+                Some(crate::expedition::Activity::Transit { to: sys1, ticks: 1 });
+        };
+
+        let mut bulk = GameState::new(&w, 1);
+        setup(&mut bulk);
+        let mut step = GameState::new(&w, 1);
+        setup(&mut step);
+
+        // Sanity: watched NOT present before advancing.
+        assert!(
+            bulk.endgame.is_none(),
+            "endgame must be None before the advance window"
+        );
+
+        // Drive N ticks — the arrival (and watched trigger) occurs on tick 1.
+        const N: u64 = 5;
+        bulk.advance(&w, N);
+        for _ in 0..N {
+            step.advance(&w, 1);
+        }
+
+        // Sanity: watched IS present in the terminal state.
+        assert_eq!(
+            bulk.endgame,
+            Some(Endgame::WatchedArrived),
+            "bulk: endgame must be WatchedArrived after the arrival"
+        );
+
+        // Core determinism assertion.
+        assert_eq!(
+            bulk, step,
+            "bulk advance({N}) and {N}×advance(1) must produce identical state"
+        );
+    }
 }
