@@ -1692,6 +1692,7 @@ impl GameState {
                     return Err(Rejected("not enough materials"));
                 }
                 self.ship.hull_plating_tier += 1;
+                // hull_max(tuning) now reflects the incremented tier, so the full step always lands.
                 self.ship.hull =
                     (self.ship.hull + tuning.hull_plating_hp_step).min(self.ship.hull_max(tuning));
                 Ok(())
@@ -5292,6 +5293,40 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_hull_plating_damaged_ship_no_clamp() {
+        // Damaged ship: hull well below old max, so the full step lands without clamping.
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        shipyard_ready(&mut s, &w);
+        let hull_max_before = s.ship.hull_max(&t);
+        // Damage the ship so hull is far below the old max.
+        s.ship.hull = 50.0;
+        assert!(
+            50.0 < hull_max_before,
+            "sanity: 50 must be below pre-upgrade hull_max"
+        );
+        let hull_before = s.ship.hull;
+        assert!(s.apply(&w, Action::UpgradeHullPlating).is_ok());
+        let hull_max_after = s.ship.hull_max(&t);
+        // hull_max must have increased by hull_plating_hp_step.
+        assert!(
+            hull_max_after > hull_max_before,
+            "hull_max should increase after upgrade"
+        );
+        assert!(
+            (hull_max_after - hull_max_before - t.hull_plating_hp_step).abs() < 1e-9,
+            "hull_max increased by exactly hull_plating_hp_step"
+        );
+        // Hull rose by exactly the step (no clamping, since hull is still well below new max).
+        assert!(
+            (s.ship.hull - hull_before - t.hull_plating_hp_step).abs() < 1e-9,
+            "hull rose by exactly hull_plating_hp_step with no clamping"
+        );
+        assert_eq!(s.ship.hull_plating_tier, 1, "tier incremented");
+    }
+
+    #[test]
     fn upgrade_hull_plating_rejected_at_max_tier() {
         let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
         let w = world(&t, &j, &m, &tc);
@@ -5430,6 +5465,31 @@ mod tests {
         assert_eq!(
             s.ship.hull, hull_before,
             "hull must not regen when away from HOME"
+        );
+    }
+
+    #[test]
+    fn hull_regen_suppressed_by_active_contact_at_home() {
+        // Even at HOME with hull below max, regen must NOT fire when a contact is present.
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let hull_max = s.ship.hull_max(&t);
+        s.ship.hull = hull_max - 10.0;
+        let hull_before = s.ship.hull;
+        // Stay at HOME (default location).
+        assert_eq!(s.expedition.location, crate::galaxy::HOME);
+        assert!(s.expedition.activity.is_none());
+        // Inject a minimal contact.
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: None,
+        });
+        s.advance(&w, 1);
+        assert_eq!(
+            s.ship.hull, hull_before,
+            "hull must not regen while a contact is active, even at HOME"
         );
     }
 }
