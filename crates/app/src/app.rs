@@ -402,7 +402,6 @@ body {
 .bar-gen   > span { background: linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent), white 35%)); box-shadow: 0 0 8px var(--accent); }
 .bar-draw  > span { background: var(--fail); }
 .bar-charge > span { background: linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent), white 35%)); box-shadow: 0 0 10px var(--accent); }
-.bar-suit  > span { background: var(--good); }
 .bar-hp    > span { background: var(--good); }
 .bar-morale > span { background: #6f9fd6; }
 .bar-enemy > span { background: var(--fail); }
@@ -418,8 +417,6 @@ body {
   border-bottom: 1px solid var(--line-soft);
 }
 .res-row:last-child { border-bottom: 0; }
-.res-net-up   { color: var(--good); }
-.res-net-down { color: var(--fail); }
 .res-full     { color: var(--accent); }
 
 /* ---- Module card grid */
@@ -2758,7 +2755,7 @@ fn Console(
                         ResourcesPanel { rows: res_rows.clone() }
                     }
                     div { class: "panel",
-                        div { class: "panel-title", "LOG" }
+                        div { class: "eyebrow", "LOG" }
                         div { class: "log",
                             for (tick, text) in log_lines.clone() {
                                 div { class: "log-line", "[{tick}] {text}" }
