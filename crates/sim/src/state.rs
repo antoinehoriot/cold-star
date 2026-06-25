@@ -82,6 +82,10 @@ pub enum Action {
     Trade,
     Harvest,
     AttackAlien,
+    HailParley,
+    HailTrade,
+    HailGift,
+    HailAvoid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1382,6 +1386,162 @@ impl GameState {
                         self.expedition.away_team.hp = 0.0;
                     }
                 }
+                Ok(())
+            }
+            // ── CB3 ship-scoped negotiation verbs ──────────────────────────
+            Action::HailParley => {
+                let contact = match self.expedition.contact.as_ref() {
+                    Some(c) => c.clone(),
+                    None => return Err(Rejected("no contact to hail")),
+                };
+                if contact.combat.is_some() {
+                    return Err(Rejected("you are in a fight — not a negotiation"));
+                }
+                if contact.kind != crate::contact::ShipKind::Peer {
+                    return Err(Rejected("it will not answer"));
+                }
+                if crate::alien::band(contact.disposition, tuning) == crate::alien::Band::Hostile {
+                    return Err(Rejected("it will not answer"));
+                }
+                let new_disp = contact.disposition + tuning.parley_shift;
+                let location = self.expedition.location;
+                if let Some(c) = self.expedition.contact.as_mut() {
+                    c.disposition = new_disp;
+                }
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Data)
+                    .or_insert(0.0) += tuning.observe_data;
+                self.log.push(
+                    self.tick,
+                    "You signal intent. It considers you.",
+                    tuning.log_capacity,
+                );
+                if new_disp >= tuning.peace_band {
+                    self.expedition.contact = None;
+                    self.resolved_contacts.insert(location.0);
+                    self.peers_spared += 1;
+                    self.note_once(
+                        NoteId::FirstPeerSpared,
+                        "The Communion Thread",
+                        "You did not know what you were trying to say. You ran the signal through every protocol you had — frequency sweep, prime ratios, power-of-two sequences — and at some point it stopped mattering which one worked. What mattered was that it answered. Not with words. With a reduction in threat posture. A mirroring of your own stillness back at you. Two machines, each built to survive the same silence, each having arrived at the same conclusion: that the silence was worse than the risk. You stand there for a long time after it goes. The record shows a contact event, resolved. It does not show that you watched the direction it left for longer than was necessary.",
+                        tuning,
+                    );
+                    self.log.push(
+                        self.tick,
+                        "They stand down — you pass.",
+                        tuning.log_capacity,
+                    );
+                }
+                Ok(())
+            }
+            Action::HailTrade => {
+                let contact = match self.expedition.contact.as_ref() {
+                    Some(c) => c.clone(),
+                    None => return Err(Rejected("no contact to trade with")),
+                };
+                if contact.combat.is_some() {
+                    return Err(Rejected("you are in a fight — not a negotiation"));
+                }
+                if contact.kind != crate::contact::ShipKind::Peer {
+                    return Err(Rejected("they will not deal"));
+                }
+                let b = crate::alien::band(contact.disposition, tuning);
+                if b == crate::alien::Band::Hostile || b == crate::alien::Band::Fearful {
+                    return Err(Rejected("they will not deal"));
+                }
+                let have = self
+                    .expedition
+                    .cargo
+                    .get(&ResourceKind::Components)
+                    .copied()
+                    .unwrap_or(0.0);
+                if have < tuning.trade_give {
+                    return Err(Rejected("not enough Components to trade"));
+                }
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Components)
+                    .or_insert(0.0) -= tuning.trade_give;
+                let gain = if b == crate::alien::Band::Curious {
+                    tuning.trade_get * CURIOUS_TRADE_BONUS
+                } else {
+                    tuning.trade_get
+                };
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Isotopes)
+                    .or_insert(0.0) += gain;
+                if let Some(c) = self.expedition.contact.as_mut() {
+                    c.disposition += tuning.trade_disp_shift;
+                }
+                self.log.push(
+                    self.tick,
+                    "You exchange what you have for what they carry. Neither of you speaks.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::HailGift => {
+                let contact = match self.expedition.contact.as_ref() {
+                    Some(c) => c.clone(),
+                    None => return Err(Rejected("no contact to gift")),
+                };
+                if contact.combat.is_some() {
+                    return Err(Rejected("you are in a fight — not a negotiation"));
+                }
+                if contact.kind != crate::contact::ShipKind::Peer {
+                    return Err(Rejected("they will not accept the gesture"));
+                }
+                let have = self
+                    .expedition
+                    .cargo
+                    .get(&ResourceKind::Components)
+                    .copied()
+                    .unwrap_or(0.0);
+                if have < tuning.gift_cost {
+                    return Err(Rejected("not enough Components to gift"));
+                }
+                *self
+                    .expedition
+                    .cargo
+                    .entry(ResourceKind::Components)
+                    .or_insert(0.0) -= tuning.gift_cost;
+                if let Some(c) = self.expedition.contact.as_mut() {
+                    c.disposition += tuning.gift_shift;
+                }
+                self.log.push(
+                    self.tick,
+                    "You set the materials down and step back. A gesture older than language.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::HailAvoid => {
+                let contact = match self.expedition.contact.as_ref() {
+                    Some(c) => c.clone(),
+                    None => return Err(Rejected("no contact to avoid")),
+                };
+                if contact.combat.is_some() {
+                    return Err(Rejected("you are in a fight — not a negotiation"));
+                }
+                if contact.kind != crate::contact::ShipKind::Peer {
+                    return Err(Rejected("they will not let you pass"));
+                }
+                if crate::alien::band(contact.disposition, tuning) == crate::alien::Band::Hostile {
+                    return Err(Rejected("they will not let you pass"));
+                }
+                let location = self.expedition.location;
+                self.expedition.contact = None;
+                self.resolved_contacts.insert(location.0);
+                self.log.push(
+                    self.tick,
+                    "You give them a wide berth. They let you go.",
+                    tuning.log_capacity,
+                );
                 Ok(())
             }
         }
@@ -4381,5 +4541,147 @@ mod tests {
         );
         // Game still playable: advance a few more ticks without panic.
         s.advance(&w, 5);
+    }
+
+    // ── CB3 Task 7: ship-scoped negotiation verbs ──────────────────────────────
+
+    /// Helper: inject a Peer ship contact with no combat (negotiation mode).
+    fn peer_negotiation_contact(disposition: f64) -> crate::contact::ShipContact {
+        crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition,
+            combat: None,
+        }
+    }
+
+    /// HailParley on a Peer near peace_band: shifts disposition, crosses peace_band
+    /// → clears contact, inserts resolved_contacts, increments peers_spared,
+    /// fires FirstPeerSpared note, grants observe_data Data to cargo.
+    #[test]
+    fn hail_parley_peer_reaches_curious_clears_and_tallies() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        let system = crate::galaxy::SystemId(7);
+        s.expedition.location = system;
+        // peace_band = 30.0, parley_shift = 18.0 — start at 15.0 so 15+18=33 >= 30
+        s.expedition.contact = Some(peer_negotiation_contact(15.0));
+
+        s.apply(&w, Action::HailParley).unwrap();
+
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact cleared after reaching Curious"
+        );
+        assert!(
+            s.resolved_contacts.contains(&system.0),
+            "system recorded in resolved_contacts"
+        );
+        assert_eq!(s.peers_spared, 1, "peers_spared incremented");
+        assert!(
+            s.codex.has(crate::codex::DiscoveryId::Note(
+                crate::codex::NoteId::FirstPeerSpared
+            )),
+            "FirstPeerSpared note fired"
+        );
+        let data = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Data)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(data > 0.0, "observe_data granted to cargo (got {})", data);
+    }
+
+    /// HailGift de-escalates a Hostile Peer: spends Components, shifts disposition.
+    #[test]
+    fn hail_gift_de_escalates_hostile_peer() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        let system = crate::galaxy::SystemId(8);
+        s.expedition.location = system;
+        // Hostile disposition (disp_hostile <= -50 by default)
+        s.expedition.contact = Some(peer_negotiation_contact(-60.0));
+        s.expedition.cargo.insert(ResourceKind::Components, 100.0);
+
+        let comp_before = 100.0f64;
+        s.apply(&w, Action::HailGift).unwrap();
+
+        let comp_after = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Components)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            comp_after < comp_before,
+            "Components spent: before={comp_before} after={comp_after}"
+        );
+        let disp_after = s.expedition.contact.as_ref().unwrap().disposition;
+        assert!(
+            disp_after > -60.0,
+            "disposition improved after Gift: {disp_after}"
+        );
+        // Contact stays open (no resolve on Gift)
+        assert!(
+            s.expedition.contact.is_some(),
+            "contact remains open after Gift"
+        );
+    }
+
+    /// HailAvoid on a non-Hostile Peer: clears contact + resolved_contacts, no peers_spared.
+    #[test]
+    fn hail_avoid_non_hostile_clears_no_tally() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        let system = crate::galaxy::SystemId(9);
+        s.expedition.location = system;
+        // Neutral disposition
+        s.expedition.contact = Some(peer_negotiation_contact(0.0));
+
+        s.apply(&w, Action::HailAvoid).unwrap();
+
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact cleared after HailAvoid"
+        );
+        assert!(
+            s.resolved_contacts.contains(&system.0),
+            "system recorded in resolved_contacts"
+        );
+        assert_eq!(s.peers_spared, 0, "HailAvoid does NOT tally peers_spared");
+    }
+
+    /// HailAvoid on a Hostile Peer is rejected — "they will not let you pass".
+    #[test]
+    fn hail_avoid_hostile_rejected() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        let system = crate::galaxy::SystemId(10);
+        s.expedition.location = system;
+        // disp_hostile = -50.0 by default; -80 is firmly Hostile
+        s.expedition.contact = Some(peer_negotiation_contact(-80.0));
+
+        let err = s.apply(&w, Action::HailAvoid).unwrap_err();
+        assert!(
+            err.0.contains("will not let you pass"),
+            "expected rejection, got: {}",
+            err.0
+        );
+        assert!(
+            s.expedition.contact.is_some(),
+            "contact must remain open after rejection"
+        );
     }
 }
