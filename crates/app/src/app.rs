@@ -1696,6 +1696,20 @@ fn Console(
     };
 
     rsx! {
+        if let Some(egvm) = endgame_vm.clone() {
+            EndgamePanel {
+                vm: egvm,
+                on_choose: move |ending| {
+                    let t = tuning.read().clone();
+                    let j = JobRegistry(jobs.read().clone());
+                    let m = ModuleRegistry(modules.read().clone());
+                    let tc = TechRegistry(techs.read().clone());
+                    let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                    if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ChooseEnding(ending)); }
+                },
+                on_restart: move |_| { state.set(None); },
+            }
+        } else {
         // Reactor readout — the heartbeat. ALWAYS visible (charge + status),
         // independent of disclosure, so the core gauge never disappears.
         div { class: "readout", "REACTOR CORE" }
@@ -2189,5 +2203,6 @@ fn Console(
                 }
             }
         }
+        } // else (no endgame)
     }
 }
