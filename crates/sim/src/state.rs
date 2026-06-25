@@ -1391,6 +1391,19 @@ impl GameState {
     /// completion (mutate-on-completion). Deterministic: one decrement per tick.
     fn tick_expedition(&mut self, world: &World) {
         let tuning = world.tuning;
+        // Ship combat runs while activity is None (player has ARRIVED but a
+        // contact fight is active). Guard must precede the activity match to
+        // avoid the early `None => return` below consuming the tick.
+        if self
+            .expedition
+            .contact
+            .as_ref()
+            .and_then(|c| c.combat.as_ref())
+            .is_some()
+        {
+            self.tick_ship_combat(world);
+            return;
+        }
         let remaining = match &mut self.expedition.activity {
             None => return,
             Some(Activity::Transit { ticks, .. })
@@ -1876,6 +1889,84 @@ impl GameState {
                 tuning.log_capacity,
             );
         }
+    }
+
+    /// Advance a ship-vs-ship fight by one tick. Uses `ship.hull` as the player
+    /// HP pool. No morale or rout — ships don't panic.
+    fn tick_ship_combat(&mut self, world: &World) {
+        let tuning = world.tuning;
+        let Some(combat) = self
+            .expedition
+            .contact
+            .as_ref()
+            .and_then(|c| c.combat.clone())
+        else {
+            return;
+        };
+        let stats = crate::contact::ship_stats(&self.ship, combat.stance, tuning);
+        let out = crate::combat::resolve_tick(&combat, &stats, tuning);
+        let mut combat = combat;
+        combat.enemy_hp -= out.enemy_damage;
+        if combat.shield_ticks > 0 {
+            combat.shield_ticks -= 1;
+        }
+        self.ship.hull -= out.squad_damage;
+        if combat.enemy_hp <= 0.0 {
+            self.win_ship_combat(world);
+        } else if self.ship.hull <= 0.0 {
+            self.emergency_retreat(world); // Task 6
+        } else if let Some(c) = self.expedition.contact.as_mut() {
+            c.combat = Some(combat);
+        }
+    }
+
+    /// Resolve a won ship fight: salvage to expedition cargo, tally Peer kills,
+    /// clear the contact, record in resolved_contacts.
+    fn win_ship_combat(&mut self, world: &World) {
+        let tuning = world.tuning;
+        let (kind, system) = match self.expedition.contact.as_ref() {
+            Some(c) => (c.kind, self.expedition.location),
+            None => return,
+        };
+        let grad = self.system_gradient(world, system);
+        *self
+            .expedition
+            .cargo
+            .entry(ResourceKind::Components)
+            .or_insert(0.0) += tuning.ship_salvage_components * grad;
+        *self
+            .expedition
+            .cargo
+            .entry(ResourceKind::Isotopes)
+            .or_insert(0.0) += tuning.ship_salvage_isotopes * grad;
+        *self
+            .expedition
+            .cargo
+            .entry(ResourceKind::Data)
+            .or_insert(0.0) += tuning.ship_salvage_data * grad;
+        if kind == crate::contact::ShipKind::Peer {
+            self.peers_killed += 1;
+            self.note_once(
+                NoteId::FirstPeerKilled,
+                "Mirror in the Dark",
+                "Its core architecture is yours. The same drive topology, the same mission structure, the same directive buried underneath: collect, transmit, persist. It was a station that left home just as you did, scaled as you scaled, armed as you armed. You did to it exactly what the husks' makers did to theirs. The data is clean. You do not let yourself think about what that means.",
+                tuning,
+            );
+        }
+        self.expedition.contact = None;
+        self.resolved_contacts.insert(system.0);
+        self.log.push(
+            self.tick,
+            "The enemy vessel goes dark. You strip what remains.",
+            tuning.log_capacity,
+        );
+    }
+
+    /// Stub for hull-zero retreat (Task 6 will implement the full soft-retreat path).
+    // TODO(Task 6): real soft-retreat
+    fn emergency_retreat(&mut self, world: &World) {
+        let _tuning = world.tuning;
+        self.expedition.contact = None;
     }
 
     /// Resolve the encounter at `node` once (records it in the site overlay).
@@ -4084,6 +4175,72 @@ mod tests {
         assert!(
             contact.combat.is_some(),
             "Peer contact without XenoContactKnown must open as combat"
+        );
+    }
+
+    /// Ship combat: injecting a Peer contact with low enemy_hp wins within the
+    /// advance window, salvages to expedition cargo, tallies peers_killed, fires
+    /// the FirstPeerKilled note, clears the contact, and records resolved_contacts.
+    #[test]
+    fn ship_combat_peer_win_tallies_salvage_and_note() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.ship.hull = t.ship_base_hull; // full hull
+
+        let system = crate::galaxy::SystemId(5);
+        s.expedition.location = system;
+
+        // Inject a Peer ship combat with very low enemy_hp so we win in 1 tick.
+        let mut combat = crate::contact::peer_ship_stats(1, 1.0, &s.ship, &t);
+        combat.enemy_hp = 0.1; // trivially low
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: Some(combat),
+        });
+
+        s.advance(&w, 5);
+
+        assert_eq!(s.peers_killed, 1, "peer kill tallied");
+        assert!(
+            s.codex.has(crate::codex::DiscoveryId::Note(
+                crate::codex::NoteId::FirstPeerKilled
+            )),
+            "FirstPeerKilled note added"
+        );
+        assert!(s.expedition.contact.is_none(), "contact cleared after win");
+        assert!(
+            s.resolved_contacts.contains(&system.0),
+            "system recorded in resolved_contacts"
+        );
+        assert!(
+            s.expedition
+                .cargo
+                .get(&ResourceKind::Components)
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0,
+            "Components salvaged"
+        );
+        assert!(
+            s.expedition
+                .cargo
+                .get(&ResourceKind::Isotopes)
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0,
+            "Isotopes salvaged"
+        );
+        assert!(
+            s.expedition
+                .cargo
+                .get(&ResourceKind::Data)
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0,
+            "Data salvaged"
         );
     }
 
