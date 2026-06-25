@@ -253,6 +253,21 @@ impl GameState {
             + t.expansion_w_systems * systems_visited
     }
 
+    /// Vocabulary-cooling tier (0–3), derived from expansion. Monotonic.
+    pub fn expansion_tier(&self, world: &World) -> u8 {
+        let s = self.expansion_score(world);
+        let t = world.tuning;
+        if s >= t.drift_t3 {
+            3
+        } else if s >= t.drift_t2 {
+            2
+        } else if s >= t.drift_t1 {
+            1
+        } else {
+            0
+        }
+    }
+
     /// The endings the player has earned (the watched offers only these).
     pub fn available_endings(&self, t: &Tuning) -> Vec<Ending> {
         let mut out = vec![Ending::Ascendant, Ending::Cold]; // always available
@@ -5842,6 +5857,21 @@ mod tests {
         s.peers_killed = 5;
         let e = s.available_endings(&t);
         assert!(!e.contains(&Ending::Communion) && !e.contains(&Ending::PatternBroken));
+    }
+
+    #[test]
+    fn expansion_tier_steps_with_score() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        assert_eq!(s.expansion_tier(&w), 0);
+        // peers_spared * w_peers(8) drives the score; cross each threshold.
+        s.peers_spared = 4; // 32 >= drift_t1 (30) → tier 1
+        assert_eq!(s.expansion_tier(&w), 1);
+        s.peers_spared = 8; // 64 >= drift_t2 (60) → tier 2
+        assert_eq!(s.expansion_tier(&w), 2);
+        s.peers_spared = 13; // 104 >= drift_t3 (100) → tier 3
+        assert_eq!(s.expansion_tier(&w), 3);
     }
 
     // ── helper: build a GameState that is above the watched_threshold ──────────

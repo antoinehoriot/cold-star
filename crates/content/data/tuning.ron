@@ -169,4 +169,8 @@
     communion_min_spared: 3.0,
     communion_max_kills: 1.0,
     pattern_max_kills: 2.0,
+    // M6b — word-drift
+    drift_t1: 30.0,
+    drift_t2: 60.0,
+    drift_t3: 100.0,
 )

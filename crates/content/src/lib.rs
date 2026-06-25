@@ -316,10 +316,19 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
         ("communion_min_spared", t.communion_min_spared),
         ("communion_max_kills", t.communion_max_kills),
         ("pattern_max_kills", t.pattern_max_kills),
+        ("drift_t1", t.drift_t1),
+        ("drift_t2", t.drift_t2),
+        ("drift_t3", t.drift_t3),
     ] {
         if !v.is_finite() || v < 0.0 {
             return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
         }
+    }
+    // M6b — word-drift tier ordering
+    if !(t.drift_t1 < t.drift_t2 && t.drift_t2 < t.drift_t3) {
+        return Err(ContentError::Invalid(
+            "word-drift tiers must satisfy drift_t1 < drift_t2 < drift_t3".into(),
+        ));
     }
     // CB3 — probability/fraction fields must also be <= 1.0
     if t.contact_chance > 1.0 {
@@ -949,5 +958,13 @@ mod tests {
         assert_eq!(t.watched_threshold, 120.0);
         assert_eq!(t.communion_min_spared, 3.0);
         assert_eq!(t.pattern_max_kills, 2.0);
+    }
+
+    #[test]
+    fn loads_m6b_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.drift_t1, 30.0);
+        assert_eq!(t.drift_t2, 60.0);
+        assert_eq!(t.drift_t3, 100.0);
     }
 }

@@ -290,6 +290,14 @@ pub struct Tuning {
     pub communion_max_kills: f64,
     /// Maximum kills allowed for the Pattern ending to remain available.
     pub pattern_max_kills: f64,
+
+    // M6b — word-drift
+    /// Expansion score threshold for tier 1 word-drift.
+    pub drift_t1: f64,
+    /// Expansion score threshold for tier 2 word-drift.
+    pub drift_t2: f64,
+    /// Expansion score threshold for tier 3 word-drift.
+    pub drift_t3: f64,
 }
 
 impl Default for Tuning {
@@ -465,6 +473,10 @@ impl Default for Tuning {
             communion_min_spared: 3.0,
             communion_max_kills: 1.0,
             pattern_max_kills: 2.0,
+            // M6b — word-drift
+            drift_t1: 30.0,
+            drift_t2: 60.0,
+            drift_t3: 100.0,
         }
     }
 }
