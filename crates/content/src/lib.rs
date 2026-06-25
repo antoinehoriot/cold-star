@@ -263,6 +263,65 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "morale_floor must be finite in (0, 1]".into(),
         ));
     }
+    // CB3 — ships in the dark: finite >= 0
+    for (name, v) in [
+        ("contact_chance", t.contact_chance),
+        ("contact_peer_share", t.contact_peer_share),
+        ("ship_peer_start_disp", t.ship_peer_start_disp),
+        ("ship_disp_spread", t.ship_disp_spread),
+        ("ship_base_atk", t.ship_base_atk),
+        ("ship_base_def", t.ship_base_def),
+        ("ship_speed", t.ship_speed),
+        ("ship_weapon_step", t.ship_weapon_step),
+        ("hull_plating_def_step", t.hull_plating_def_step),
+        ("hull_plating_hp_step", t.hull_plating_hp_step),
+        ("peer_ship_hp", t.peer_ship_hp),
+        ("peer_ship_atk", t.peer_ship_atk),
+        ("peer_ship_def", t.peer_ship_def),
+        ("peer_ship_mirror", t.peer_ship_mirror),
+        ("remnant_ship_hp", t.remnant_ship_hp),
+        ("remnant_ship_atk", t.remnant_ship_atk),
+        ("remnant_ship_def", t.remnant_ship_def),
+        ("ship_enemy_speed", t.ship_enemy_speed),
+        ("ship_salvage_components", t.ship_salvage_components),
+        ("ship_salvage_isotopes", t.ship_salvage_isotopes),
+        ("ship_salvage_data", t.ship_salvage_data),
+        ("repair_drone_heal", t.repair_drone_heal),
+        ("repair_drone_cost", t.repair_drone_cost),
+        ("ship_weapon_upgrade_alloy", t.ship_weapon_upgrade_alloy),
+        (
+            "ship_weapon_upgrade_components",
+            t.ship_weapon_upgrade_components,
+        ),
+        ("hull_plating_upgrade_alloy", t.hull_plating_upgrade_alloy),
+        (
+            "hull_plating_upgrade_components",
+            t.hull_plating_upgrade_components,
+        ),
+        ("hull_regen_docked", t.hull_regen_docked),
+        ("retreat_cargo_loss", t.retreat_cargo_loss),
+        ("hull_retreat_floor", t.hull_retreat_floor),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
+        }
+    }
+    // CB3 — probability/fraction fields must also be <= 1.0
+    if t.contact_chance > 1.0 {
+        return Err(ContentError::Invalid(
+            "contact_chance must be <= 1.0".into(),
+        ));
+    }
+    if t.contact_peer_share > 1.0 {
+        return Err(ContentError::Invalid(
+            "contact_peer_share must be <= 1.0".into(),
+        ));
+    }
+    if t.retreat_cargo_loss > 1.0 {
+        return Err(ContentError::Invalid(
+            "retreat_cargo_loss must be <= 1.0".into(),
+        ));
+    }
     // CB2 — aliens & disposition
     // Band thresholds: ordering assertion (not non-negative — they may be negative)
     if !t.disp_hostile.is_finite() || !t.disp_neutral.is_finite() || !t.disp_curious.is_finite() {
@@ -835,5 +894,18 @@ mod tests {
         assert_eq!(t.peer_hp, 70.0);
         assert_eq!(t.peer_gear_mirror, 0.5);
         assert_eq!(t.harvest_fauna_yield, 16.0);
+    }
+
+    #[test]
+    fn loads_cb3_tuning() {
+        let t = load().unwrap();
+        assert_eq!(t.contact_chance, 0.35);
+        assert_eq!(t.contact_peer_share, 0.6);
+        assert_eq!(t.peer_ship_hp, 90.0);
+        assert_eq!(t.peer_ship_mirror, 0.5);
+        assert_eq!(t.hull_plating_hp_step, 40.0);
+        assert_eq!(t.repair_drone_heal, 35.0);
+        assert_eq!(t.hull_regen_docked, 3.0);
+        assert_eq!(t.retreat_cargo_loss, 0.4);
     }
 }

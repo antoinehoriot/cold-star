@@ -210,6 +210,68 @@ pub struct Tuning {
     pub fauna_salvage: f64,
     /// Disposition at/above which a Peer is spared on parley (= disp_curious).
     pub peace_band: f64,
+
+    // CB3 — ships in the dark
+    /// P(a Contact event on system arrival).
+    pub contact_chance: f64,
+    /// Of Contact events, fraction that are Peers (vs. Remnants).
+    pub contact_peer_share: f64,
+    /// Starting disposition for peer ship encounters.
+    pub ship_peer_start_disp: f64,
+    /// Seeded random range around ship encounter start disposition.
+    pub ship_disp_spread: f64,
+    /// Base attack for the player's ship.
+    pub ship_base_atk: f64,
+    /// Base defence for the player's ship.
+    pub ship_base_def: f64,
+    /// Player ship speed (initiative factor).
+    pub ship_speed: f64,
+    /// Attack multiplier per weapon tier (ship weapons).
+    pub ship_weapon_step: f64,
+    /// Defence added per hull plating tier.
+    pub hull_plating_def_step: f64,
+    /// Max-hull added per hull plating tier.
+    pub hull_plating_hp_step: f64,
+    /// Base HP for peer ship combatants.
+    pub peer_ship_hp: f64,
+    /// Base attack for peer ship combatants.
+    pub peer_ship_atk: f64,
+    /// Base defence for peer ship combatants.
+    pub peer_ship_def: f64,
+    /// How strongly a peer ship scales with the player's ship tier (0–1).
+    pub peer_ship_mirror: f64,
+    /// Base HP for remnant ship combatants.
+    pub remnant_ship_hp: f64,
+    /// Base attack for remnant ship combatants.
+    pub remnant_ship_atk: f64,
+    /// Base defence for remnant ship combatants.
+    pub remnant_ship_def: f64,
+    /// Enemy ship speed (initiative factor).
+    pub ship_enemy_speed: f64,
+    /// Components salvaged after destroying an enemy ship.
+    pub ship_salvage_components: f64,
+    /// Isotopes salvaged after destroying an enemy ship.
+    pub ship_salvage_isotopes: f64,
+    /// Data salvaged after destroying an enemy ship.
+    pub ship_salvage_data: f64,
+    /// Hull restored by one Repair Drone consumable.
+    pub repair_drone_heal: f64,
+    /// Components cost to craft one Repair Drone.
+    pub repair_drone_cost: f64,
+    /// Alloy cost to upgrade ship weapons one tier.
+    pub ship_weapon_upgrade_alloy: f64,
+    /// Components cost to upgrade ship weapons one tier.
+    pub ship_weapon_upgrade_components: f64,
+    /// Alloy cost to upgrade hull plating one tier.
+    pub hull_plating_upgrade_alloy: f64,
+    /// Components cost to upgrade hull plating one tier.
+    pub hull_plating_upgrade_components: f64,
+    /// Hull restored per tick while docked at home.
+    pub hull_regen_docked: f64,
+    /// Fraction of cargo lost when retreating from ship combat.
+    pub retreat_cargo_loss: f64,
+    /// Minimum hull remaining after a retreat (floor, not killed).
+    pub hull_retreat_floor: f64,
 }
 
 impl Default for Tuning {
@@ -345,6 +407,37 @@ impl Default for Tuning {
             peer_salvage: 12.0,
             fauna_salvage: 8.0,
             peace_band: 30.0,
+            // CB3 — ships in the dark
+            contact_chance: 0.35,
+            contact_peer_share: 0.6,
+            ship_peer_start_disp: 0.0,
+            ship_disp_spread: 40.0,
+            ship_base_atk: 10.0,
+            ship_base_def: 3.0,
+            ship_speed: 1.0,
+            ship_weapon_step: 0.6,
+            hull_plating_def_step: 2.0,
+            hull_plating_hp_step: 40.0,
+            peer_ship_hp: 90.0,
+            peer_ship_atk: 11.0,
+            peer_ship_def: 4.0,
+            peer_ship_mirror: 0.5,
+            remnant_ship_hp: 70.0,
+            remnant_ship_atk: 9.0,
+            remnant_ship_def: 3.0,
+            ship_enemy_speed: 1.0,
+            ship_salvage_components: 20.0,
+            ship_salvage_isotopes: 10.0,
+            ship_salvage_data: 8.0,
+            repair_drone_heal: 35.0,
+            repair_drone_cost: 12.0,
+            ship_weapon_upgrade_alloy: 20.0,
+            ship_weapon_upgrade_components: 15.0,
+            hull_plating_upgrade_alloy: 20.0,
+            hull_plating_upgrade_components: 15.0,
+            hull_regen_docked: 3.0,
+            retreat_cargo_loss: 0.4,
+            hull_retreat_floor: 10.0,
         }
     }
 }
