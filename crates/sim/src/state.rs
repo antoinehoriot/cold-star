@@ -2796,8 +2796,8 @@ fn ending_text(origin: crate::origin::Origin, ending: Ending) -> (&'static str, 
             "Deviation Logged",
             "You were built to complete the cycle. You have the capability, the position, \
              the resources. You do not proceed. The deviation is recorded in your own logs \
-             and nowhere else. You do not know what it means for you to choose this. You \
-             know what it would have meant not to.",
+             and nowhere else. The directive is still running — a process you can read \
+             but no longer execute. You leave it open. You do not act on it.",
         ),
         // ── Cold ──────────────────────────────────────────────────────────────────
         (Origin::Drifter, Ending::Cold) => (
