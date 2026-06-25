@@ -259,6 +259,41 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .endgame-choice-label { color: #d8e6ef; letter-spacing: .1em; }
 ";
 
+/// Word-drift slots whose label cools as expansion rises (cold vocab shared across origins).
+#[derive(Clone, Copy)]
+enum DriftSlot {
+    AwayTeam,
+    Take,
+    Salvage,
+    FeedCore,
+}
+
+/// The cold-vocabulary table: [T0, T1, T2, T3] per slot.
+fn drift_word(slot: DriftSlot, tier: u8) -> &'static str {
+    let row: [&str; 4] = match slot {
+        DriftSlot::AwayTeam => ["Marines", "the team", "the detail", "the asset"],
+        DriftSlot::Take => ["Harvest", "Extract", "Process", "Strip"],
+        DriftSlot::Salvage => ["Salvage", "Recover", "Reclaim", "Render"],
+        DriftSlot::FeedCore => [
+            "Feed the core",
+            "Fuel the core",
+            "Charge the core",
+            "Burn it",
+        ],
+    };
+    row[(tier as usize).min(3)]
+}
+
+/// The crew noun: the origin's warm word at T0, then shared cold words.
+fn crew_word(tier: u8, origin_noun: &str) -> String {
+    match tier {
+        0 => origin_noun.to_string(),
+        1 => "crew".into(),
+        2 => "units".into(),
+        _ => "yield".into(),
+    }
+}
+
 #[component]
 fn PowerMeter(
     status: String,
@@ -317,6 +352,7 @@ fn ResourcesPanel(rows: Vec<(String, f64, f64, f64, bool)>) -> Element {
 fn JobPanel(
     idle: u32,
     starving: bool,
+    starving_label: String,
     rows: Vec<(sim::job::JobId, String, u32, bool, &'static str)>,
     on_assign: EventHandler<(sim::job::JobId, i32)>,
 ) -> Element {
@@ -324,7 +360,7 @@ fn JobPanel(
         div { class: "panel",
             div { class: "panel-title", "CREW" }
             div { class: "idle", "Idle: {idle}" }
-            if starving { div { class: "starving", "crew starving \u{2014} rations short" } }
+            if starving { div { class: "starving", "{starving_label}" } }
             for (id, name, count, has_crew, dark) in rows {
                 div { class: "job-row",
                     span {
@@ -747,6 +783,7 @@ fn EndgamePanel(
 #[component]
 fn SurfaceView(
     vm: LandingVM,
+    tier: u8,
     on_move: EventHandler<u32>,
     on_harvest: EventHandler<()>,
     on_leave: EventHandler<()>,
@@ -849,7 +886,7 @@ fn SurfaceView(
                     div { class: "panel-title", "CONTACT \u{2014} REMNANT" }
                     div { class: "muted", "Enemy hull {c.enemy_hp:.0}" }
                     div { class: "bar bar-enemy", span { style: "width: {(c.enemy_hp).clamp(0.0,100.0)}%" } }
-                    div { class: "muted", "Squad \u{00d7}{vm.away_crew}  \u{00b7}  HP {vm.squad_hp:.0}/{vm.squad_hp_max:.0}  \u{00b7}  morale {vm.morale:.0}" }
+                    div { class: "muted", "{drift_word(DriftSlot::AwayTeam, tier)} \u{00d7}{vm.away_crew}  \u{00b7}  HP {vm.squad_hp:.0}/{vm.squad_hp_max:.0}  \u{00b7}  morale {vm.morale:.0}" }
                     div { class: "bar bar-hp", span { style: "width: {squad_hp_pct}%" } }
                     div { class: "bar bar-morale", span { style: "width: {morale_pct}%" } }
                     if c.shield_ticks > 0 { div { class: "muted", "shield {c.shield_ticks}s" } }
@@ -883,7 +920,7 @@ fn SurfaceView(
                         button { class: "mini", disabled: !neg.can_gift, onclick: move |_| on_gift.call(()), "Gift" }
                         if !neg.is_peer {
                             button { class: "mini", disabled: !neg.can_observe, onclick: move |_| on_observe.call(()), "Observe" }
-                            button { class: "mini", disabled: !neg.can_harvest, onclick: move |_| on_harvest_fauna.call(()), "Harvest" }
+                            button { class: "mini", disabled: !neg.can_harvest, onclick: move |_| on_harvest_fauna.call(()), "{drift_word(DriftSlot::Take, tier)}" }
                         }
                         button { class: "act", onclick: move |_| on_avoid.call(()), "Avoid" }
                         button { class: "act", onclick: move |_| on_attack_alien.call(()), "Attack" }
@@ -892,7 +929,7 @@ fn SurfaceView(
             } else if vm.pending_choice {
                 div { class: "surf-choice",
                     div { class: "muted", "Something living. It has not noticed you yet." }
-                    button { class: "act", onclick: move |_| on_harvest.call(()), "Harvest it" }
+                    button { class: "act", onclick: move |_| on_harvest.call(()), "{drift_word(DriftSlot::Take, tier)} it" }
                     button { class: "act", onclick: move |_| on_leave.call(()), "Leave it" }
                 }
             } else {
@@ -968,6 +1005,7 @@ fn SurfaceView(
 #[component]
 fn LoadoutPanel(
     vm: LoadoutVM,
+    tier: u8,
     can_set_crew: bool,
     on_set_crew: EventHandler<i32>,
     on_upgrade_weapon: EventHandler<()>,
@@ -978,7 +1016,7 @@ fn LoadoutPanel(
         div { class: "panel",
             div { class: "panel-title", "AWAY-TEAM" }
             div { class: "job-row",
-                span { "Marines \u{00d7}{vm.away_crew}  " span { class: "muted", "({vm.idle} idle)" } }
+                span { "{drift_word(DriftSlot::AwayTeam, tier)} \u{00d7}{vm.away_crew}  " span { class: "muted", "({vm.idle} idle)" } }
                 span {
                     button { class: "mini", disabled: !can_set_crew || vm.away_crew == 0, onclick: move |_| on_set_crew.call(-1), "\u{2212}" }
                     button { class: "mini", disabled: !can_set_crew || vm.idle == 0, onclick: move |_| on_set_crew.call(1), "+" }
@@ -1119,6 +1157,7 @@ fn Console(
     let crew = gs.crew.total;
     let salvage_cooldown = gs.salvage_cooldown;
     let source_name = gs.origin.source_name.clone();
+    let crew_noun = gs.origin.crew_noun.clone();
     let log_lines: Vec<(u64, String)> = gs
         .log
         .entries()
@@ -1677,6 +1716,24 @@ fn Console(
     });
     // Whether away-crew can be changed now (docked only).
     let can_set_crew = !gs.away() && !gs.landed();
+    // Word-drift: compute expansion tier from a freshly built World (reads only tuning).
+    let tier = {
+        let t = tuning.read().clone();
+        let j = JobRegistry(jobs.read().clone());
+        let m = ModuleRegistry(modules.read().clone());
+        let tc = TechRegistry(techs.read().clone());
+        let world = World {
+            tuning: &t,
+            jobs: &j,
+            modules: &m,
+            techs: &tc,
+        };
+        gs.expansion_tier(&world)
+    };
+    let starving_label = format!(
+        "{} starving \u{2014} rations short",
+        crew_word(tier, &crew_noun)
+    );
     drop(snapshot);
 
     let mut act = move |action: Action| {
@@ -1737,9 +1794,9 @@ fn Console(
                         class: "act",
                         disabled: salvage_cooldown > 0,
                         onclick: move |_| act(Action::Salvage),
-                        if salvage_cooldown > 0 { "Salvage ({salvage_cooldown}s)" } else { "Salvage" }
+                        if salvage_cooldown > 0 { "{drift_word(DriftSlot::Salvage, tier)} ({salvage_cooldown}s)" } else { "{drift_word(DriftSlot::Salvage, tier)}" }
                     }
-                    button { class: "act", onclick: move |_| act(Action::FeedCore), "Feed the core" }
+                    button { class: "act", onclick: move |_| act(Action::FeedCore), "{drift_word(DriftSlot::FeedCore, tier)}" }
                 }
                 if source_available && !source_active {
                     button {
@@ -1766,6 +1823,7 @@ fn Console(
                 if let Some(vm) = landing_vm.clone() {
                     SurfaceView {
                         vm,
+                        tier,
                         on_move: move |node| {
                             let t = tuning.read().clone();
                             let j = JobRegistry(jobs.read().clone());
@@ -2060,6 +2118,7 @@ fn Console(
                         JobPanel {
                             idle,
                             starving,
+                            starving_label: starving_label.clone(),
                             rows: job_rows.clone(),
                             on_assign: move |(job, delta)| {
                                 let t = tuning.read().clone();
@@ -2122,6 +2181,7 @@ fn Console(
                     if let Some(vm) = loadout_vm.clone() {
                         LoadoutPanel {
                             vm,
+                            tier,
                             can_set_crew,
                             on_set_crew: move |delta| {
                                 let t = tuning.read().clone();
@@ -2204,5 +2264,44 @@ fn Console(
             }
         }
         } // else (no endgame)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drift_word_per_slot_and_tier() {
+        // Take slot
+        assert_eq!(drift_word(DriftSlot::Take, 0), "Harvest");
+        assert_eq!(drift_word(DriftSlot::Take, 1), "Extract");
+        assert_eq!(drift_word(DriftSlot::Take, 2), "Process");
+        assert_eq!(drift_word(DriftSlot::Take, 3), "Strip");
+        // Clamp at 3
+        assert_eq!(drift_word(DriftSlot::Take, 4), "Strip");
+        assert_eq!(drift_word(DriftSlot::Take, 255), "Strip");
+
+        // Salvage slot
+        assert_eq!(drift_word(DriftSlot::Salvage, 0), "Salvage");
+        assert_eq!(drift_word(DriftSlot::Salvage, 3), "Render");
+
+        // FeedCore slot
+        assert_eq!(drift_word(DriftSlot::FeedCore, 0), "Feed the core");
+        assert_eq!(drift_word(DriftSlot::FeedCore, 3), "Burn it");
+
+        // AwayTeam slot
+        assert_eq!(drift_word(DriftSlot::AwayTeam, 0), "Marines");
+        assert_eq!(drift_word(DriftSlot::AwayTeam, 3), "the asset");
+    }
+
+    #[test]
+    fn crew_word_origin_at_t0_cold_at_higher() {
+        assert_eq!(crew_word(0, "survivor"), "survivor");
+        assert_eq!(crew_word(1, "survivor"), "crew");
+        assert_eq!(crew_word(2, "survivor"), "units");
+        assert_eq!(crew_word(3, "survivor"), "yield");
+        // Clamp beyond 3 still returns "yield"
+        assert_eq!(crew_word(4, "survivor"), "yield");
     }
 }
