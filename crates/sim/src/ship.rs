@@ -10,6 +10,8 @@ pub struct Ship {
     pub drive_range: f64,
     pub cargo: f64,
     pub hull: f64,
+    pub ship_weapon_tier: u8,
+    pub hull_plating_tier: u8,
 }
 
 impl Ship {
@@ -19,6 +21,12 @@ impl Ship {
             drive_range: t.ship_base_drive_range,
             cargo: t.ship_cargo,
             hull: t.ship_base_hull,
+            ship_weapon_tier: 0,
+            hull_plating_tier: 0,
         }
+    }
+
+    pub fn hull_max(&self, t: &Tuning) -> f64 {
+        t.ship_base_hull + self.hull_plating_tier as f64 * t.hull_plating_hp_step
     }
 }

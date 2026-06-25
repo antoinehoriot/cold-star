@@ -117,6 +117,7 @@ pub struct GameState {
     pub consumables: BTreeMap<ConsumableKind, u32>,
     pub peers_spared: u32,
     pub peers_killed: u32,
+    pub resolved_contacts: BTreeSet<u32>,
 }
 
 impl GameState {
@@ -166,6 +167,7 @@ impl GameState {
             consumables: BTreeMap::new(),
             peers_spared: 0,
             peers_killed: 0,
+            resolved_contacts: BTreeSet::new(),
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);

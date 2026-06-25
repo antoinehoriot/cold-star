@@ -41,6 +41,8 @@ pub struct Expedition {
     pub cargo: BTreeMap<ResourceKind, f64>,
     pub landing: Option<Landing>,
     pub away_team: AwayTeam,
+    pub contact: Option<crate::contact::ShipContact>,
+    pub prev_location: SystemId,
 }
 
 impl Default for Expedition {
@@ -51,6 +53,8 @@ impl Default for Expedition {
             cargo: BTreeMap::new(),
             landing: None,
             away_team: AwayTeam::default(),
+            contact: None,
+            prev_location: HOME,
         }
     }
 }
