@@ -1962,11 +1962,29 @@ impl GameState {
         );
     }
 
-    /// Stub for hull-zero retreat (Task 6 will implement the full soft-retreat path).
-    // TODO(Task 6): real soft-retreat
+    /// Hull driven to zero in ship combat: dump cargo, set hull to floor, jump back
+    /// to `prev_location`. Does NOT insert into `resolved_contacts` — the enemy is
+    /// still out there and may reappear if the player returns.
     fn emergency_retreat(&mut self, world: &World) {
-        let _tuning = world.tuning;
+        let tuning = world.tuning;
         self.expedition.contact = None;
+        for v in self.expedition.cargo.values_mut() {
+            *v *= 1.0 - tuning.retreat_cargo_loss;
+        }
+        self.ship.hull = tuning.hull_retreat_floor;
+        let safe = self.expedition.prev_location;
+        self.expedition.location = safe;
+        self.note_once(
+            NoteId::FirstShipCrippled,
+            "What Almost Had You",
+            "Your hull reads zero and the damage-control screen is all red. You do not look at it. You spin up the drive on emergency sequence and jump blind, no trajectory computed, just away — the coordinates that are already loaded because they are where you came from. The dark falls back into place around you and you are somewhere else, or somewhere earlier, and your hands are still shaking on the controls. You came out here to take things. Something almost took you instead. You sit with that for longer than you mean to.",
+            tuning,
+        );
+        self.log.push(
+            self.tick,
+            "Hull breached. You break contact and limp to safe space.",
+            tuning.log_capacity,
+        );
     }
 
     /// Resolve the encounter at `node` once (records it in the site overlay).
@@ -3194,7 +3212,11 @@ mod tests {
 
     #[test]
     fn resolve_site_fills_cargo_and_deposits_on_return() {
-        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let mut t = Tuning::default();
+        // Disable contact rolls so no ship combat fires and emergency_retreat
+        // cannot send the ship home before this test can assert the location.
+        t.contact_chance = 0.0;
+        let (j, m, tc) = (jobs(), modules(), techs());
         let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 4);
         s.resources.add(ResourceKind::Fuel, 200.0);
@@ -3292,7 +3314,11 @@ mod tests {
 
     #[test]
     fn station_management_locks_while_away() {
-        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let mut t = Tuning::default();
+        // Disable contact rolls so no ship combat can emergency_retreat the
+        // ship home before this test can assert it is still away.
+        t.contact_chance = 0.0;
+        let (j, m, tc) = (jobs(), modules(), techs());
         let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 4);
         s.resources.add(ResourceKind::Fuel, 200.0);
@@ -3316,7 +3342,11 @@ mod tests {
 
     #[test]
     fn scavenge_only_when_stranded_and_refuels_home() {
-        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let mut t = Tuning::default();
+        // Disable contact rolls so no ship combat can emergency_retreat the
+        // ship home before this test strands and scavenges.
+        t.contact_chance = 0.0;
+        let (j, m, tc) = (jobs(), modules(), techs());
         let w = world(&t, &j, &m, &tc);
         let mut s = GameState::new(&w, 4);
         s.resources.add(ResourceKind::Fuel, 200.0);
@@ -4266,5 +4296,94 @@ mod tests {
             s.expedition.contact.is_none(),
             "no contact for an already-resolved system"
         );
+    }
+
+    /// Hull drops to zero mid ship-combat → emergency_retreat fires:
+    /// - location jumps back to prev_location
+    /// - contact cleared
+    /// - hull == hull_retreat_floor (clamped, not negative)
+    /// - cargo reduced by retreat_cargo_loss fraction
+    /// - FirstShipCrippled note fired
+    /// - system NOT added to resolved_contacts (a loss ≠ resolved)
+    /// - game still playable (no panic)
+    #[test]
+    fn emergency_retreat_on_hull_zero() {
+        let mut t = Tuning::default();
+        // Guarantee the player loses in a single tick: set enemy attack very high
+        // and player hull very low. We will set hull directly after setup.
+        t.retreat_cargo_loss = 0.4;
+        t.hull_retreat_floor = 10.0;
+        // Make enemy deal guaranteed damage per tick > player hull.
+        t.remnant_ship_atk = 9999.0;
+        t.remnant_ship_def = 0.0;
+
+        let (j, m, tc) = (jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 7);
+        s.ship.built = true;
+
+        // Place the ship in a non-home system with a known prev_location.
+        let away_system = crate::galaxy::SystemId(3);
+        let prev_system = crate::galaxy::SystemId(2);
+        s.expedition.location = away_system;
+        s.expedition.prev_location = prev_system;
+
+        // Put 100 units of Isotopes in cargo so we can measure the loss.
+        *s.expedition
+            .cargo
+            .entry(ResourceKind::Isotopes)
+            .or_insert(0.0) = 100.0;
+
+        // Set hull to a tiny positive value — one tick will drive it to ≤ 0.
+        s.ship.hull = 0.01;
+
+        // Inject a Remnant ship combat (enemy still very much alive).
+        let combat = crate::contact::remnant_ship_stats(1, 1.0, &t);
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Remnant,
+            disposition: 0.0,
+            combat: Some(combat),
+        });
+
+        // Advance — the first tick's ship combat will drive hull ≤ 0.
+        s.advance(&w, 1);
+
+        assert_eq!(
+            s.expedition.location, prev_system,
+            "ship retreated to prev_location"
+        );
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact cleared after retreat"
+        );
+        assert!(
+            (s.ship.hull - t.hull_retreat_floor).abs() < 1e-9,
+            "hull clamped to retreat floor (was {}, want {})",
+            s.ship.hull,
+            t.hull_retreat_floor
+        );
+        let isotopes = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Isotopes)
+            .copied()
+            .unwrap_or(0.0);
+        let expected = 100.0 * (1.0 - t.retreat_cargo_loss);
+        assert!(
+            (isotopes - expected).abs() < 1e-6,
+            "cargo reduced by retreat_cargo_loss: got {isotopes}, want {expected}"
+        );
+        assert!(
+            s.codex.has(crate::codex::DiscoveryId::Note(
+                crate::codex::NoteId::FirstShipCrippled
+            )),
+            "FirstShipCrippled note fired"
+        );
+        assert!(
+            !s.resolved_contacts.contains(&away_system.0),
+            "a loss does NOT mark the system resolved"
+        );
+        // Game still playable: advance a few more ticks without panic.
+        s.advance(&w, 5);
     }
 }
