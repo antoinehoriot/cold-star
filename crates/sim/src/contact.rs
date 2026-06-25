@@ -23,6 +23,21 @@ pub struct ShipContact {
 
 pub(crate) const CONTACT_SALT: u32 = 0x5417;
 
+/// Roll whether a contact occurs at `system` for this world seed. Pure on
+/// `(world_seed, system)` — re-jumping the same system always yields the same
+/// result. Returns `None` for no contact, or `Some(kind)` otherwise.
+pub fn roll_contact(world_seed: u64, system: SystemId, t: &Tuning) -> Option<ShipKind> {
+    let mut rng = Rng::new(hash(world_seed.wrapping_add(CONTACT_SALT as u64), system.0));
+    if rng.next_f64() >= t.contact_chance {
+        return None;
+    }
+    if rng.next_f64() < t.contact_peer_share {
+        Some(ShipKind::Peer)
+    } else {
+        Some(ShipKind::Remnant)
+    }
+}
+
 /// Seeded starting disposition for a Peer ship (pure on world_seed + system).
 pub fn contact_start_disposition(world_seed: u64, system: SystemId, t: &Tuning) -> f64 {
     let mut rng = Rng::new(hash(world_seed ^ CONTACT_SALT as u64, system.0));
@@ -89,6 +104,18 @@ mod tests {
             a,
             contact_start_disposition(7, crate::galaxy::SystemId(4), &t)
         );
+    }
+
+    #[test]
+    fn roll_contact_is_pure_and_pinned() {
+        let t = Tuning::default();
+        // Same call returns the same result (pure / deterministic).
+        let a = roll_contact(42, crate::galaxy::SystemId(4), &t);
+        assert_eq!(a, roll_contact(42, crate::galaxy::SystemId(4), &t));
+        // Pinned: seed=42, system=4 → Peer (verified by test setup).
+        assert_eq!(a, Some(ShipKind::Peer));
+        // Different system diverges.
+        assert_ne!(a, roll_contact(42, crate::galaxy::SystemId(1), &t));
     }
 
     #[test]

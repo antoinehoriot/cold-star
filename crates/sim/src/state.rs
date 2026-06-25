@@ -557,9 +557,23 @@ impl GameState {
         )
     }
 
+    /// While a ship Contact is open, system exploration actions are blocked.
+    /// Contact-resolution verbs (Tasks 7–8) and Jump are not blocked.
+    fn is_contact_blocked(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::ScanSystem(_) | Action::ResolveSite(..) | Action::Scavenge | Action::Land(_)
+        )
+    }
+
     pub fn apply(&mut self, world: &World, action: Action) -> Result<(), Rejected> {
         if self.landed() && Self::is_landing_blocked(&action) {
             return Err(Rejected("you are on the surface"));
+        }
+        if self.expedition.contact.is_some() && Self::is_contact_blocked(&action) {
+            return Err(Rejected(
+                "a vessel is blocking your approach — resolve the contact",
+            ));
         }
         if self.away() && Self::is_station_management(&action) {
             return Err(Rejected("you are away from the station"));
@@ -1284,13 +1298,7 @@ impl GameState {
                 }
                 let (system, site_idx, node) = (l.system, l.site_idx, l.node);
                 // Yield is harvest_fauna_yield * grad; depth is not used here.
-                let galaxy = self.galaxy(world);
-                let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
-                    (Some(h), Some(s)) => {
-                        1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient
-                    }
-                    _ => 1.0,
-                };
+                let grad = self.system_gradient(world, system);
                 let amt = tuning.harvest_fauna_yield * grad;
                 self.satchel_add(ResourceKind::Rations, amt);
                 if let Some(l) = self.expedition.landing.as_mut() {
@@ -1325,13 +1333,7 @@ impl GameState {
                     .get(node)
                     .map(|n| n.depth)
                     .unwrap_or(0);
-                let galaxy = self.galaxy(world);
-                let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
-                    (Some(h), Some(s)) => {
-                        1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient
-                    }
-                    _ => 1.0,
-                };
+                let grad = self.system_gradient(world, system);
                 let combat = match kind {
                     crate::alien::AlienKind::Fauna => {
                         crate::alien::fauna_stats(depth, grad, tuning)
@@ -1407,6 +1409,7 @@ impl GameState {
         let finished = self.expedition.activity.take().expect("activity present");
         match finished {
             Activity::Transit { to, .. } => {
+                self.expedition.prev_location = self.expedition.location;
                 self.expedition.location = to;
                 let galaxy = self.galaxy(world);
                 reveal_from(
@@ -1445,6 +1448,7 @@ impl GameState {
                     "The drive cuts out. A new star fills the port.",
                     tuning.log_capacity,
                 );
+                self.maybe_start_contact(world, to);
             }
             Activity::Scan { target, .. } => {
                 self.galaxy_state.scanned.insert(target.0);
@@ -1469,13 +1473,7 @@ impl GameState {
             Activity::ResolveSite {
                 system, site_idx, ..
             } => {
-                let galaxy = self.galaxy(world);
-                let home = galaxy.get(HOME);
-                let here = galaxy.get(system);
-                let grad = match (home, here) {
-                    (Some(h), Some(s)) => 1.0 + distance(h, s) * tuning.reward_gradient,
-                    _ => 1.0,
-                };
+                let grad = self.system_gradient(world, system);
                 let kind = self
                     .galaxy_state
                     .sites
@@ -1714,17 +1712,91 @@ impl GameState {
         }
     }
 
+    /// Home-distance reward gradient: 1.0 at home, higher the farther `system` is.
+    fn system_gradient(&self, world: &World, system: SystemId) -> f64 {
+        let tuning = world.tuning;
+        let galaxy = self.galaxy(world);
+        match (galaxy.get(HOME), galaxy.get(system)) {
+            (Some(h), Some(s)) => 1.0 + distance(h, s) * tuning.reward_gradient,
+            _ => 1.0,
+        }
+    }
+
+    /// On arrival in `system`, roll whether a ship contact occurs and, if so,
+    /// open it as negotiation (Peer + XenoContactKnown) or combat.
+    fn maybe_start_contact(&mut self, world: &World, system: SystemId) {
+        let tuning = world.tuning;
+        // No contact at home or in a system where we already resolved one.
+        if system == HOME || self.resolved_contacts.contains(&system.0) {
+            return;
+        }
+        let Some(kind) = crate::contact::roll_contact(self.world_seed, system, tuning) else {
+            return;
+        };
+        // Depth for ship scaling: distance from home, rounded to integer.
+        let galaxy = self.galaxy(world);
+        let depth = match (galaxy.get(HOME), galaxy.get(system)) {
+            (Some(h), Some(s)) => distance(h, s).round() as u32,
+            _ => 0,
+        };
+        let grad = self.system_gradient(world, system);
+        // Peer + XenoContactKnown → negotiation lane (no combat block).
+        let negotiate = matches!(kind, crate::contact::ShipKind::Peer)
+            && self.flags.contains(&Flag::XenoContactKnown);
+        let contact = if negotiate {
+            self.note_once(
+                NoteId::FirstShipContact,
+                "Another Vessel",
+                "You detect it before you see it — a drive signature that mirrors yours, a mass that moves the way only a built thing moves. It does not descend to the surface. It does not flee. It holds position and broadcasts on a frequency your station recognises, because your station once used that frequency too. Another light, moving through the dark the same way you do. It does not land. It lives out here.",
+                tuning,
+            );
+            crate::contact::ShipContact {
+                kind,
+                disposition: crate::contact::contact_start_disposition(
+                    self.world_seed,
+                    system,
+                    tuning,
+                ),
+                combat: None,
+            }
+        } else {
+            if kind == crate::contact::ShipKind::Peer {
+                self.note_once(
+                    NoteId::FirstShipContact,
+                    "Another Vessel",
+                    "You detect it before you see it — a drive signature that mirrors yours, a mass that moves the way only a built thing moves. It does not descend to the surface. It does not flee. It holds position and broadcasts on a frequency your station recognises, because your station once used that frequency too. Another light, moving through the dark the same way you do. It does not land. It lives out here.",
+                    tuning,
+                );
+            }
+            let combat = match kind {
+                crate::contact::ShipKind::Peer => {
+                    crate::contact::peer_ship_stats(depth, grad, &self.ship, tuning)
+                }
+                crate::contact::ShipKind::Remnant => {
+                    crate::contact::remnant_ship_stats(depth, grad, tuning)
+                }
+            };
+            crate::contact::ShipContact {
+                kind,
+                disposition: 0.0,
+                combat: Some(combat),
+            }
+        };
+        self.expedition.contact = Some(contact);
+        self.log.push(
+            self.tick,
+            "A contact resolves out of the dark. A vessel.",
+            tuning.log_capacity,
+        );
+    }
+
     fn win_combat(&mut self, world: &World, combat: &crate::combat::Combat) {
         let tuning = world.tuning;
         let (system, site_idx, node) = match self.expedition.landing.as_ref() {
             Some(l) => (l.system, l.site_idx, l.node),
             None => return,
         };
-        let galaxy = self.galaxy(world);
-        let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
-            (Some(h), Some(s)) => 1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient,
-            _ => 1.0,
-        };
+        let grad = self.system_gradient(world, system);
         // Capture kind before clearing combat from the landing.
         let kind = combat.kind;
         if let Some(l) = self.expedition.landing.as_mut() {
@@ -1832,11 +1904,7 @@ impl GameState {
         let kind = n.kind;
         let depth = n.depth;
         // Frontier gradient: richer the deeper the system is from home.
-        let galaxy = self.galaxy(world);
-        let grad = match (galaxy.get(crate::galaxy::HOME), galaxy.get(system)) {
-            (Some(h), Some(s)) => 1.0 + crate::galaxy::distance(h, s) * tuning.reward_gradient,
-            _ => 1.0,
-        };
+        let grad = self.system_gradient(world, system);
         let depth_mult = 1.0 + depth as f64 * tuning.surface_depth_reward;
         match kind {
             crate::landing::EncounterKind::ResourceCache => {
@@ -3044,6 +3112,9 @@ mod tests {
         // Arrive.
         s.advance(&w, 64);
         assert_eq!(s.expedition.location, target);
+        // Clear any contact that opened on arrival — this test covers site-resolution,
+        // not contact blocking. A real player would resolve the contact first.
+        s.expedition.contact = None;
         let sites = s
             .galaxy_state
             .sites
@@ -3161,6 +3232,9 @@ mod tests {
         let target = a_reachable_target(&s, &w);
         s.apply(&w, Action::Jump(target)).unwrap();
         s.advance(&w, 64); // arrive
+        // Clear any contact that opened on arrival — this test covers scavenge
+        // behaviour, not contact blocking. A real player would resolve it first.
+        s.expedition.contact = None;
         // Drain fuel to strand the ship.
         s.resources
             .try_spend(ResourceKind::Fuel, s.resources.amount(ResourceKind::Fuel));
@@ -3183,6 +3257,9 @@ mod tests {
         let target = a_reachable_target(&s, &w);
         s.apply(&w, Action::Jump(target)).unwrap();
         s.advance(&w, 64); // arrive, still fuel-rich
+        // Clear any contact that opened on arrival so we test the "not stranded"
+        // rejection, not the contact-blocking rejection.
+        s.expedition.contact = None;
         assert_eq!(
             s.apply(&w, Action::Scavenge),
             Err(Rejected("no need to scavenge"))
@@ -3922,5 +3999,115 @@ mod tests {
             step.advance(&w, 1);
         }
         assert_eq!(bulk, step);
+    }
+
+    // --- CB3 Task 4 tests ---
+
+    /// Arriving in a system that has a seeded Peer contact surfaces the contact
+    /// and blocks ScanSystem while it is open.
+    /// Pinned seed: world_seed=42 + system=4 → roll_contact returns Some(Peer).
+    #[test]
+    fn arrival_surfaces_contact_and_blocks_scan() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        // world_seed=42 so roll_contact(42, 4, ..) → Some(Peer)
+        let mut s = GameState::new(&w, 42);
+        s.ship.built = true;
+
+        let target = crate::galaxy::SystemId(4);
+        // Manually inject transit completion to system 4.
+        s.expedition.activity = Some(crate::expedition::Activity::Transit {
+            to: target,
+            ticks: 1,
+        });
+        s.advance(&w, 1);
+
+        // Contact must be open after arrival.
+        assert!(
+            s.expedition.contact.is_some(),
+            "expected a contact at system 4 with seed 42"
+        );
+        assert_eq!(s.expedition.location, target);
+
+        // ScanSystem must be rejected while the contact is open.
+        let other = crate::galaxy::SystemId(5);
+        let err = s.apply(&w, Action::ScanSystem(other)).unwrap_err();
+        assert!(
+            err.0.contains("resolve the contact"),
+            "expected contact-block message, got: {}",
+            err.0
+        );
+    }
+
+    /// With XenoContactKnown set, a Peer contact opens negotiation (combat is None).
+    #[test]
+    fn peer_contact_with_xeno_known_opens_negotiation() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 42);
+        s.ship.built = true;
+        s.flags.insert(crate::flags::Flag::XenoContactKnown);
+
+        let target = crate::galaxy::SystemId(4);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit {
+            to: target,
+            ticks: 1,
+        });
+        s.advance(&w, 1);
+
+        let contact = s.expedition.contact.as_ref().expect("contact must be open");
+        assert_eq!(contact.kind, crate::contact::ShipKind::Peer);
+        assert!(
+            contact.combat.is_none(),
+            "XenoContactKnown Peer contact must open as negotiation, not combat"
+        );
+    }
+
+    /// Without XenoContactKnown, a Peer contact opens as combat.
+    #[test]
+    fn peer_contact_without_xeno_known_opens_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 42);
+        s.ship.built = true;
+        // XenoContactKnown is NOT set
+
+        let target = crate::galaxy::SystemId(4);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit {
+            to: target,
+            ticks: 1,
+        });
+        s.advance(&w, 1);
+
+        let contact = s.expedition.contact.as_ref().expect("contact must be open");
+        assert_eq!(contact.kind, crate::contact::ShipKind::Peer);
+        assert!(
+            contact.combat.is_some(),
+            "Peer contact without XenoContactKnown must open as combat"
+        );
+    }
+
+    /// Resolved systems do not surface a second contact on re-arrival.
+    #[test]
+    fn resolved_system_skips_contact_roll() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 42);
+        s.ship.built = true;
+
+        let target = crate::galaxy::SystemId(4);
+        // Mark system 4 as already resolved.
+        s.resolved_contacts.insert(4);
+
+        s.expedition.activity = Some(crate::expedition::Activity::Transit {
+            to: target,
+            ticks: 1,
+        });
+        s.advance(&w, 1);
+
+        assert!(
+            s.expedition.contact.is_none(),
+            "no contact for an already-resolved system"
+        );
     }
 }
