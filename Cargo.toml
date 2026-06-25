@@ -1,3 +1,10 @@
 [workspace]
 resolver = "2"
 members = ["crates/sim", "crates/content", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Antoine Horiot"]
+repository = "https://github.com/antoinehoriot/cold-star"

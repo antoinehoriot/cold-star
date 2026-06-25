@@ -1,7 +1,11 @@
 [package]
 name = "sim"
-version = "0.1.0"
-edition = "2024"
+description = "Cold Star — the pure, deterministic game engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 base64 = "0.22.1"

@@ -5,3 +5,7 @@
 
 # throwaway test save links
 save-link.txt
+
+# design docs + spoilers + dev mockups (kept local, not public)
+/docs
+/mockups
