@@ -251,6 +251,12 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .bar-hull > span { background: #6fb7d6; }
 .bar-enemy > span { background: #d66f6f; }
 .munitions { margin-top: 1rem; }
+.endgame { border-color: #5b3a4a; max-width: 560px; margin: 1rem auto; }
+.endgame-body { white-space: pre-wrap; line-height: 1.6; color: #c7d3dd; margin: .6rem 0 1rem; }
+.endgame-complete { letter-spacing: .25em; margin-bottom: 1rem; }
+.endgame-choices { display: flex; flex-direction: column; gap: .6rem; margin-top: .8rem; }
+.endgame-choice { text-align: left; }
+.endgame-choice-label { color: #d8e6ef; letter-spacing: .1em; }
 ";
 
 #[component]
@@ -708,6 +714,37 @@ fn ContactPanel(
 }
 
 #[component]
+fn EndgamePanel(
+    vm: EndgameVM,
+    on_choose: EventHandler<sim::Ending>,
+    on_restart: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "panel endgame",
+            if vm.ended {
+                div { class: "panel-title", "{vm.ending_title}" }
+                div { class: "endgame-body", "{vm.ending_body}" }
+                div { class: "muted endgame-complete", "The run is complete." }
+                button { class: "act", onclick: move |_| on_restart.call(()), "Begin again" }
+            } else {
+                div { class: "panel-title", "THE WATCHED" }
+                div { class: "muted", "It waits. The record is open. Choose how this ends." }
+                div { class: "endgame-choices",
+                    for (e, label, desc) in vm.choices.clone() {
+                        button {
+                            class: "act endgame-choice",
+                            onclick: move |_| on_choose.call(e),
+                            div { class: "endgame-choice-label", "{label}" }
+                            div { class: "muted", "{desc}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn SurfaceView(
     vm: LandingVM,
     on_move: EventHandler<u32>,
@@ -965,6 +1002,16 @@ fn LoadoutPanel(
             }
         }
     }
+}
+
+#[derive(Clone, PartialEq)]
+struct EndgameVM {
+    ended: bool,
+    // WatchedArrived: the earned choices — (ending, button label, one-line meaning)
+    choices: Vec<(sim::Ending, String, String)>,
+    // Ended: the chosen ending's per-origin closing note (read from the codex)
+    ending_title: String,
+    ending_body: String,
 }
 
 #[component]
@@ -1567,6 +1614,67 @@ fn Console(
     } else {
         None
     };
+    let endgame_vm = gs.endgame.as_ref().map(|eg| {
+        use sim::Ending::*;
+        let copy = |e: sim::Ending| -> (&'static str, &'static str) {
+            match e {
+                Ascendant => (
+                    "Press onward",
+                    "consume what remains; become the next thing the dark survives",
+                ),
+                Communion => (
+                    "Stand down",
+                    "refuse to consume; the harder, quieter future",
+                ),
+                PatternBroken => (
+                    "Stop here",
+                    "leave a living world intact; survival without conquest",
+                ),
+                Cold => (
+                    "Let the fire die",
+                    "let the reactor go dark; the cycle pauses here",
+                ),
+            }
+        };
+        match eg {
+            sim::Endgame::WatchedArrived => {
+                let tn = tuning.read();
+                EndgameVM {
+                    ended: false,
+                    choices: gs
+                        .available_endings(&tn)
+                        .into_iter()
+                        .map(|e| {
+                            let (l, d) = copy(e);
+                            (e, l.to_string(), d.to_string())
+                        })
+                        .collect(),
+                    ending_title: String::new(),
+                    ending_body: String::new(),
+                }
+            }
+            sim::Endgame::Ended(e) => {
+                use sim::codex::{DiscoveryId, NoteId};
+                let nid = match e {
+                    Ascendant => NoteId::EndingAscendant,
+                    Communion => NoteId::EndingCommunion,
+                    PatternBroken => NoteId::EndingPatternBroken,
+                    Cold => NoteId::EndingCold,
+                };
+                let entry = gs
+                    .codex
+                    .entries
+                    .iter()
+                    .find(|d| d.id == DiscoveryId::Note(nid));
+                EndgameVM {
+                    ended: true,
+                    choices: Vec::new(),
+                    ending_title: entry.map(|d| d.title.clone()).unwrap_or_default(),
+                    ending_body: entry.map(|d| d.text.clone()).unwrap_or_default(),
+                }
+            }
+        }
+    });
     // Whether away-crew can be changed now (docked only).
     let can_set_crew = !gs.away() && !gs.landed();
     drop(snapshot);
