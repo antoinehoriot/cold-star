@@ -1746,12 +1746,8 @@ impl GameState {
         let Some(kind) = crate::contact::roll_contact(self.world_seed, system, tuning) else {
             return;
         };
-        // Depth for ship scaling: distance from home, rounded to integer.
-        let galaxy = self.galaxy(world);
-        let depth = match (galaxy.get(HOME), galaxy.get(system)) {
-            (Some(h), Some(s)) => distance(h, s).round() as u32,
-            _ => 0,
-        };
+        // Ship enemy scaling rides the frontier gradient ONLY — distance is already
+        // baked into `grad`, so pass depth 0 to avoid double-counting distance.
         let grad = self.system_gradient(world, system);
         // Peer + XenoContactKnown → negotiation lane (no combat block).
         let negotiate = matches!(kind, crate::contact::ShipKind::Peer)
@@ -1783,10 +1779,10 @@ impl GameState {
             }
             let combat = match kind {
                 crate::contact::ShipKind::Peer => {
-                    crate::contact::peer_ship_stats(depth, grad, &self.ship, tuning)
+                    crate::contact::peer_ship_stats(0, grad, &self.ship, tuning)
                 }
                 crate::contact::ShipKind::Remnant => {
-                    crate::contact::remnant_ship_stats(depth, grad, tuning)
+                    crate::contact::remnant_ship_stats(0, grad, tuning)
                 }
             };
             crate::contact::ShipContact {

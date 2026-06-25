@@ -313,7 +313,7 @@ impl Default for Tuning {
             star_weight_giant: 1.5,
             ship_base_drive_range: 40.0,
             ship_cargo: 60.0,
-            ship_base_hull: 10.0,
+            ship_base_hull: 120.0,
             jump_base_cost: 5.0,
             jump_drive_factor: 0.2,
             transit_ticks_base: 8,
