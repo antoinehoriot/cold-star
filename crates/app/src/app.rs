@@ -654,6 +654,60 @@ fn NavigationPanel(
 }
 
 #[component]
+fn ContactPanel(
+    vm: ContactVM,
+    on_parley: EventHandler<()>,
+    on_trade: EventHandler<()>,
+    on_gift: EventHandler<()>,
+    on_avoid: EventHandler<()>,
+    on_attack: EventHandler<()>,
+    on_flee: EventHandler<()>,
+    on_stance: EventHandler<()>,
+    on_repair: EventHandler<()>,
+) -> Element {
+    let disp_pct = ((vm.disposition + 100.0) / 2.0).clamp(0.0, 100.0);
+    let hull_pct = if vm.hull_max > 0.0 {
+        (vm.hull / vm.hull_max * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    rsx! {
+        div { class: "panel contact",
+            div { class: "panel-title", "CONTACT \u{2014} {vm.kind}" }
+            div { class: "muted", "Hull {vm.hull:.0} / {vm.hull_max:.0}" }
+            div { class: "bar bar-hull", span { style: "width: {hull_pct}%" } }
+            if vm.in_combat {
+                div { class: "muted", "Enemy hull {vm.enemy_hp:.0}" }
+                div { class: "bar bar-enemy", span { style: "width: {(vm.enemy_hp).clamp(0.0,100.0)}%" } }
+                div { class: "contact-actions",
+                    button { class: "mini", onclick: move |_| on_stance.call(()), "stance: {vm.stance}" }
+                    button { class: "mini", disabled: vm.repair_drones == 0, onclick: move |_| on_repair.call(()), "Repair drone ({vm.repair_drones})" }
+                    button { class: "act", disabled: !vm.can_flee, onclick: move |_| on_flee.call(()), "Flee" }
+                }
+            } else {
+                if vm.is_peer {
+                    div { class: "neg-band band-{vm.band}", "Disposition: {vm.band} ({vm.disposition:.0})" }
+                    div { class: "bar bar-disp", span { style: "width: {disp_pct}%" } }
+                    div { class: "muted", "It moves the way you move. It is deciding about you, too." }
+                } else {
+                    div { class: "muted", "A husk-ship. It does not answer hails." }
+                }
+                div { class: "contact-actions",
+                    if vm.is_peer {
+                        button { class: "mini", disabled: !vm.can_parley, onclick: move |_| on_parley.call(()), "Parley" }
+                        button { class: "mini", disabled: !vm.can_trade, onclick: move |_| on_trade.call(()), "Trade" }
+                        button { class: "mini", disabled: !vm.can_gift, onclick: move |_| on_gift.call(()), "Gift" }
+                        button { class: "mini", disabled: !vm.can_avoid, onclick: move |_| on_avoid.call(()), "Avoid" }
+                    }
+                    button { class: "act", onclick: move |_| on_attack.call(()), "Attack" }
+                    button { class: "act", disabled: !vm.can_flee, onclick: move |_| on_flee.call(()), "Flee" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn SurfaceView(
     vm: LandingVM,
     on_move: EventHandler<u32>,
@@ -1687,6 +1741,80 @@ fn Console(
                             let tc = TechRegistry(techs.read().clone());
                             let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                             if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::AttackAlien); }
+                        },
+                    }
+                } else if let Some(cvm) = contact_vm.clone() {
+                    ContactPanel {
+                        vm: cvm,
+                        on_parley: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailParley); }
+                        },
+                        on_trade: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailTrade); }
+                        },
+                        on_gift: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailGift); }
+                        },
+                        on_avoid: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailAvoid); }
+                        },
+                        on_attack: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::AttackShip); }
+                        },
+                        on_flee: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ShipFlee); }
+                        },
+                        on_stance: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() {
+                                let next = match gs.expedition.contact.as_ref().and_then(|c| c.combat.as_ref()).map(|c| c.stance) {
+                                    Some(sim::combat::Stance::Aggressive) => sim::combat::Stance::Defensive,
+                                    _ => sim::combat::Stance::Aggressive,
+                                };
+                                let _ = gs.apply(&world, Action::SetShipStance(next));
+                            }
+                        },
+                        on_repair: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UseRepairDrone); }
                         },
                     }
                 } else {
