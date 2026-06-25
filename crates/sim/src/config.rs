@@ -272,6 +272,24 @@ pub struct Tuning {
     pub retreat_cargo_loss: f64,
     /// Minimum hull remaining after a retreat (floor, not killed).
     pub hull_retreat_floor: f64,
+
+    // M6a — the turn & endings
+    /// Scoring weight for peer encounters (expansion scoring).
+    pub expansion_w_peers: f64,
+    /// Scoring weight for strip-mining systems (expansion scoring).
+    pub expansion_w_strip: f64,
+    /// Scoring weight for resource consumption (expansion scoring).
+    pub expansion_w_consume: f64,
+    /// Scoring weight for systems visited (expansion scoring).
+    pub expansion_w_systems: f64,
+    /// Expansion score above which the player is "watched" by the Communion.
+    pub watched_threshold: f64,
+    /// Minimum peers spared for the Communion ending to be available.
+    pub communion_min_spared: f64,
+    /// Maximum kills allowed for the Communion ending to remain available.
+    pub communion_max_kills: f64,
+    /// Maximum kills allowed for the Pattern ending to remain available.
+    pub pattern_max_kills: f64,
 }
 
 impl Default for Tuning {
@@ -438,6 +456,15 @@ impl Default for Tuning {
             hull_regen_docked: 3.0,
             retreat_cargo_loss: 0.4,
             hull_retreat_floor: 10.0,
+            // M6a — the turn & endings
+            expansion_w_peers: 8.0,
+            expansion_w_strip: 1.0,
+            expansion_w_consume: 0.02,
+            expansion_w_systems: 4.0,
+            watched_threshold: 120.0,
+            communion_min_spared: 3.0,
+            communion_max_kills: 1.0,
+            pattern_max_kills: 2.0,
         }
     }
 }

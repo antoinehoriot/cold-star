@@ -160,4 +160,13 @@
     hull_regen_docked: 3.0,
     retreat_cargo_loss: 0.4,
     hull_retreat_floor: 10.0,
+    // M6a — the turn & endings
+    expansion_w_peers: 8.0,
+    expansion_w_strip: 1.0,
+    expansion_w_consume: 0.02,
+    expansion_w_systems: 4.0,
+    watched_threshold: 120.0,
+    communion_min_spared: 3.0,
+    communion_max_kills: 1.0,
+    pattern_max_kills: 2.0,
 )
