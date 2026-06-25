@@ -48,6 +48,20 @@ pub struct World<'a> {
     pub techs: &'a crate::research::TechRegistry,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Ending {
+    Ascendant,
+    Communion,
+    PatternBroken,
+    Cold,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Endgame {
+    WatchedArrived,
+    Ended(Ending),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     Ignite,
@@ -129,6 +143,7 @@ pub struct GameState {
     pub peers_spared: u32,
     pub peers_killed: u32,
     pub resolved_contacts: BTreeSet<u32>,
+    pub endgame: Option<Endgame>,
 }
 
 impl GameState {
@@ -179,6 +194,7 @@ impl GameState {
             peers_spared: 0,
             peers_killed: 0,
             resolved_contacts: BTreeSet::new(),
+            endgame: None,
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -216,6 +232,41 @@ impl GameState {
     /// Landed = currently on a planet surface.
     pub fn landed(&self) -> bool {
         self.expedition.landing.is_some()
+    }
+
+    /// Cumulative expansion, derived from seeded state. Monotonic non-decreasing.
+    pub fn expansion_score(&self, world: &World) -> f64 {
+        let t = world.tuning;
+        let peers = (self.peers_spared + self.peers_killed) as f64;
+        let worlds_stripped: usize = self
+            .galaxy_state
+            .sites
+            .values()
+            .flat_map(|v| v.iter())
+            .map(|s| s.resolved_nodes.len())
+            .sum();
+        let systems_visited = self.galaxy_state.sites.len() as f64;
+        t.expansion_w_peers * peers
+            + t.expansion_w_strip * worlds_stripped as f64
+            + t.expansion_w_consume * self.total_scrap_gained
+            + t.expansion_w_systems * systems_visited
+    }
+
+    /// The endings the player has earned (the watched offers only these).
+    pub fn available_endings(&self, t: &Tuning) -> Vec<Ending> {
+        let mut out = vec![Ending::Ascendant, Ending::Cold]; // always available
+        let spared_life = self.codex.has(crate::codex::DiscoveryId::Note(
+            crate::codex::NoteId::LifeSpared,
+        ));
+        if self.peers_spared as f64 >= t.communion_min_spared
+            && self.peers_killed as f64 <= t.communion_max_kills
+        {
+            out.push(Ending::Communion);
+        }
+        if spared_life && self.peers_killed as f64 <= t.pattern_max_kills {
+            out.push(Ending::PatternBroken);
+        }
+        out
     }
 
     fn surface_site(
@@ -5594,5 +5645,32 @@ mod tests {
                 "non-resolved system with a hot roll must surface a contact"
             );
         }
+    }
+
+    #[test]
+    fn expansion_score_and_gating() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        assert_eq!(s.expansion_score(&w), 0.0);
+        // Ascendant + Cold always; Communion/PatternBroken not yet earned.
+        let e = s.available_endings(&t);
+        assert!(e.contains(&Ending::Ascendant) && e.contains(&Ending::Cold));
+        assert!(!e.contains(&Ending::Communion) && !e.contains(&Ending::PatternBroken));
+        // Peaceful history → Communion + PatternBroken unlock.
+        s.peers_spared = 4;
+        s.codex.add(crate::codex::Discovery {
+            id: crate::codex::DiscoveryId::Note(crate::codex::NoteId::LifeSpared),
+            title: "x".into(),
+            text: "x".into(),
+            tick: 0,
+        });
+        let e = s.available_endings(&t);
+        assert!(e.contains(&Ending::Communion) && e.contains(&Ending::PatternBroken));
+        assert!(s.expansion_score(&w) > 0.0); // peers count toward expansion
+        // A conqueror loses the peaceful paths.
+        s.peers_killed = 5;
+        let e = s.available_endings(&t);
+        assert!(!e.contains(&Ending::Communion) && !e.contains(&Ending::PatternBroken));
     }
 }

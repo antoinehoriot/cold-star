@@ -52,5 +52,5 @@ pub use research::{ActiveResearch, Grant, Research, Tech, TechId, TechRegistry};
 pub use resources::{ResourceKind, Resources};
 pub use rng::Rng;
 pub use ship::Ship;
-pub use state::{Action, GameState, Rejected, SAVE_VERSION, World};
+pub use state::{Action, Endgame, Ending, GameState, Rejected, SAVE_VERSION, World};
 pub use telemetry::Telemetry;
