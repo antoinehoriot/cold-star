@@ -71,6 +71,9 @@ pub enum Action {
     UpgradeWeapon,
     UpgradeArmor,
     CraftConsumable(ConsumableKind),
+    UpgradeShipWeapon,
+    UpgradeHullPlating,
+    CraftRepairDrone,
     SetAwayCrew { delta: i32 },
     UseConsumable(ConsumableKind),
     SetStance(crate::combat::Stance),
@@ -444,6 +447,9 @@ impl GameState {
             // --- away-team rations consumption + starvation ---
             self.tick_away_team(world);
 
+            // --- docked hull regen ---
+            self.tick_hull_regen(world);
+
             // --- atmosphere failure: survival clock -> crew loss ---
             let atmosphere_failing = self.has_module(ModuleId::Atmosphere)
                 && self.crew.total > 0
@@ -541,6 +547,9 @@ impl GameState {
                 | Action::UpgradeWeapon
                 | Action::UpgradeArmor
                 | Action::CraftConsumable(_)
+                | Action::UpgradeShipWeapon
+                | Action::UpgradeHullPlating
+                | Action::CraftRepairDrone
         )
     }
 
@@ -1639,6 +1648,70 @@ impl GameState {
                 );
                 Ok(())
             }
+            Action::UpgradeShipWeapon => {
+                if !self.flags.contains(&Flag::MunitionsKnown) {
+                    return Err(Rejected("no munitions doctrine"));
+                }
+                if self.built_count(ModuleId::Shipyard) == 0 {
+                    return Err(Rejected("no shipyard"));
+                }
+                if self.ship.ship_weapon_tier >= 2 {
+                    return Err(Rejected("weapon at max tier"));
+                }
+                let cost = vec![
+                    (ResourceKind::Alloy, tuning.ship_weapon_upgrade_alloy),
+                    (
+                        ResourceKind::Components,
+                        tuning.ship_weapon_upgrade_components,
+                    ),
+                ];
+                if !self.resources.try_spend_all(&cost) {
+                    return Err(Rejected("not enough materials"));
+                }
+                self.ship.ship_weapon_tier += 1;
+                Ok(())
+            }
+            Action::UpgradeHullPlating => {
+                if !self.flags.contains(&Flag::MunitionsKnown) {
+                    return Err(Rejected("no munitions doctrine"));
+                }
+                if self.built_count(ModuleId::Shipyard) == 0 {
+                    return Err(Rejected("no shipyard"));
+                }
+                if self.ship.hull_plating_tier >= 2 {
+                    return Err(Rejected("hull plating at max tier"));
+                }
+                let cost = vec![
+                    (ResourceKind::Alloy, tuning.hull_plating_upgrade_alloy),
+                    (
+                        ResourceKind::Components,
+                        tuning.hull_plating_upgrade_components,
+                    ),
+                ];
+                if !self.resources.try_spend_all(&cost) {
+                    return Err(Rejected("not enough materials"));
+                }
+                self.ship.hull_plating_tier += 1;
+                self.ship.hull =
+                    (self.ship.hull + tuning.hull_plating_hp_step).min(self.ship.hull_max(tuning));
+                Ok(())
+            }
+            Action::CraftRepairDrone => {
+                if !self.flags.contains(&Flag::MunitionsKnown) {
+                    return Err(Rejected("no munitions doctrine"));
+                }
+                if self.built_count(ModuleId::Shipyard) == 0 {
+                    return Err(Rejected("no shipyard"));
+                }
+                if !self
+                    .resources
+                    .try_spend_all(&[(ResourceKind::Components, tuning.repair_drone_cost)])
+                {
+                    return Err(Rejected("not enough materials"));
+                }
+                self.ship.repair_drones += 1;
+                Ok(())
+            }
         }
     }
 
@@ -1845,6 +1918,20 @@ impl GameState {
                     (self.expedition.away_team.morale - tuning.morale_per_death).max(0.0);
                 self.expedition.away_team.hp = self.squad_hp_max(tuning);
             }
+        }
+    }
+
+    /// Regenerate hull HP while docked at HOME with no activity or contact.
+    /// Deterministic: fixed arithmetic, no RNG.
+    fn tick_hull_regen(&mut self, world: &World) {
+        let tuning = world.tuning;
+        if self.expedition.location == crate::galaxy::HOME
+            && self.expedition.activity.is_none()
+            && self.expedition.contact.is_none()
+            && self.ship.hull < self.ship.hull_max(tuning)
+        {
+            self.ship.hull =
+                (self.ship.hull + tuning.hull_regen_docked).min(self.ship.hull_max(tuning));
         }
     }
 
@@ -5108,5 +5195,241 @@ mod tests {
         let mut s = GameState::new(&w, 1);
         let err = s.apply(&w, Action::ShipFlee).unwrap_err();
         assert!(err.0.contains("no contact"), "got: {}", err.0);
+    }
+
+    // ── CB3 Task 9: ship upgrade actions ─────────────────────────────────────
+
+    fn shipyard_ready(s: &mut GameState, w: &World) {
+        s.flags.insert(Flag::MunitionsKnown);
+        s.flags.insert(Flag::JumpTheoryKnown);
+        s.resources.add(ResourceKind::Alloy, 500.0);
+        s.resources.add(ResourceKind::Components, 500.0);
+        s.resources.add(ResourceKind::Scrap, 500.0);
+        s.apply(w, Action::Build(ModuleId::Shipyard)).unwrap();
+    }
+
+    #[test]
+    fn upgrade_ship_weapon_raises_tier_and_spends_resources() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        shipyard_ready(&mut s, &w);
+        let alloy_before = s.resources.amount(ResourceKind::Alloy);
+        let comp_before = s.resources.amount(ResourceKind::Components);
+        assert!(s.apply(&w, Action::UpgradeShipWeapon).is_ok());
+        assert_eq!(s.ship.ship_weapon_tier, 1);
+        assert!(
+            s.resources.amount(ResourceKind::Alloy) < alloy_before,
+            "alloy spent"
+        );
+        assert!(
+            s.resources.amount(ResourceKind::Components) < comp_before,
+            "components spent"
+        );
+    }
+
+    #[test]
+    fn upgrade_ship_weapon_rejected_at_max_tier() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        shipyard_ready(&mut s, &w);
+        s.ship.ship_weapon_tier = 2;
+        let err = s.apply(&w, Action::UpgradeShipWeapon).unwrap_err();
+        assert!(
+            err.0.contains("max tier"),
+            "expected max-tier rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn upgrade_ship_weapon_rejected_without_munitions_known() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        // No MunitionsKnown flag, no shipyard.
+        let err = s.apply(&w, Action::UpgradeShipWeapon).unwrap_err();
+        assert!(
+            err.0.contains("munitions"),
+            "expected munitions rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn upgrade_ship_weapon_rejected_without_shipyard() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.flags.insert(Flag::MunitionsKnown);
+        // No shipyard built.
+        let err = s.apply(&w, Action::UpgradeShipWeapon).unwrap_err();
+        assert!(
+            err.0.contains("shipyard"),
+            "expected no-shipyard rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn upgrade_hull_plating_raises_tier_and_hull() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        shipyard_ready(&mut s, &w);
+        let hull_before = s.ship.hull;
+        assert!(s.apply(&w, Action::UpgradeHullPlating).is_ok());
+        assert_eq!(s.ship.hull_plating_tier, 1);
+        assert!(
+            s.ship.hull > hull_before,
+            "hull should increase by hull_plating_hp_step"
+        );
+        assert_eq!(
+            s.ship.hull,
+            (hull_before + t.hull_plating_hp_step).min(s.ship.hull_max(&t))
+        );
+    }
+
+    #[test]
+    fn upgrade_hull_plating_rejected_at_max_tier() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        shipyard_ready(&mut s, &w);
+        s.ship.hull_plating_tier = 2;
+        let err = s.apply(&w, Action::UpgradeHullPlating).unwrap_err();
+        assert!(
+            err.0.contains("max tier"),
+            "expected max-tier rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn upgrade_hull_plating_rejected_without_munitions_known() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let err = s.apply(&w, Action::UpgradeHullPlating).unwrap_err();
+        assert!(
+            err.0.contains("munitions"),
+            "expected munitions rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn upgrade_hull_plating_rejected_without_shipyard() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.flags.insert(Flag::MunitionsKnown);
+        let err = s.apply(&w, Action::UpgradeHullPlating).unwrap_err();
+        assert!(
+            err.0.contains("shipyard"),
+            "expected no-shipyard rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn craft_repair_drone_spends_components_and_increments_count() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        shipyard_ready(&mut s, &w);
+        let comp_before = s.resources.amount(ResourceKind::Components);
+        let drones_before = s.ship.repair_drones;
+        assert!(s.apply(&w, Action::CraftRepairDrone).is_ok());
+        assert_eq!(s.ship.repair_drones, drones_before + 1);
+        assert!(
+            s.resources.amount(ResourceKind::Components) < comp_before,
+            "components spent"
+        );
+    }
+
+    #[test]
+    fn craft_repair_drone_rejected_without_munitions_known() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let err = s.apply(&w, Action::CraftRepairDrone).unwrap_err();
+        assert!(
+            err.0.contains("munitions"),
+            "expected munitions rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn craft_repair_drone_rejected_without_shipyard() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.flags.insert(Flag::MunitionsKnown);
+        let err = s.apply(&w, Action::CraftRepairDrone).unwrap_err();
+        assert!(
+            err.0.contains("shipyard"),
+            "expected no-shipyard rejection, got: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn hull_regen_docked_at_home_below_max() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        // Damage hull below max.
+        let hull_max = s.ship.hull_max(&t);
+        s.ship.hull = hull_max - 10.0;
+        let hull_before = s.ship.hull;
+        // Advance 1 tick while docked at HOME with no activity/contact.
+        assert_eq!(s.expedition.location, crate::galaxy::HOME);
+        assert!(s.expedition.activity.is_none());
+        assert!(s.expedition.contact.is_none());
+        s.advance(&w, 1);
+        assert!(
+            s.ship.hull > hull_before,
+            "hull should regen while docked at HOME"
+        );
+        assert!(
+            (s.ship.hull - hull_before - t.hull_regen_docked).abs() < 1e-9,
+            "hull should regen by exactly hull_regen_docked per tick"
+        );
+    }
+
+    #[test]
+    fn hull_regen_capped_at_hull_max() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let hull_max = s.ship.hull_max(&t);
+        // Hull is already at max.
+        s.ship.hull = hull_max;
+        s.advance(&w, 5);
+        assert!(s.ship.hull <= hull_max, "hull must not exceed hull_max");
+        assert_eq!(
+            s.ship.hull, hull_max,
+            "hull stays at max, does not overflow"
+        );
+    }
+
+    #[test]
+    fn hull_regen_does_not_occur_away_from_home() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let hull_max = s.ship.hull_max(&t);
+        s.ship.hull = hull_max - 10.0;
+        let hull_before = s.ship.hull;
+        // Move to a different system (simulate being away by changing location).
+        s.expedition.location = crate::galaxy::SystemId(5);
+        s.advance(&w, 1);
+        assert_eq!(
+            s.ship.hull, hull_before,
+            "hull must not regen when away from HOME"
+        );
     }
 }
