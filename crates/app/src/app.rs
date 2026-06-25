@@ -572,6 +572,10 @@ body {
   background: color-mix(in oklab, var(--accent), transparent 94%);
 }
 
+/* ---- Life veil — desaturate/dim everything BELOW the rail as charge falls.
+   Sibling of .rail (NOT an ancestor), so sticky is unaffected. */
+.life-veil { filter: saturate(calc(.35 + var(--charge) * .65)) brightness(calc(.82 + var(--charge) * .18)); transition: filter .5s ease; }
+
 /* ---- Dimmed state (station locked while away) */
 .dimmed {
   opacity: .4;
@@ -2429,6 +2433,9 @@ fn Console(
             }
         }
 
+        // Life veil — siblings of .rail, filtered together. .rail stays outside.
+        div { class: "life-veil",
+
         if let Some((secs, crit)) = atmo_warning {
             div {
                 class: if crit { "ls-warn crit" } else { "ls-warn" },
@@ -2916,6 +2923,7 @@ fn Console(
                 }
             }
         }
+        } // life-veil
         } // else (no endgame)
         } // console-root
     }
