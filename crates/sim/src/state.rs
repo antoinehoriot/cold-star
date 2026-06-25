@@ -2214,7 +2214,7 @@ impl GameState {
         self.note_once(
             NoteId::TheRuinsWereHome,
             "What the Ruins Were",
-            "You have the survey data. You can go back through it now. The derelicts you stripped for hull plating, the stations you dismantled for drive cores — they were not ancient. They were not alien. They were the right age, and the right scale, and the right shape. They were yours. Different seed, same directive: go out, take what you can carry, do not come back until you have enough. You have been stripping your own future from the dark.",
+            "You have the survey data. You can go back through it now. The derelicts you stripped for hull plating, the stations you dismantled for drive cores — they were not ancient. They were not alien. They were the right age, and the right scale, and the right shape. They were yours. Different seed, same directive: go out, take what you can carry, do not come back until you have enough. The newest of them had not been dead long. Its last log entry was a fuel calculation.",
             tuning,
         );
         self.note_once(
