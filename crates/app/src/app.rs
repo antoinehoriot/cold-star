@@ -968,6 +968,26 @@ fn LoadoutPanel(
 }
 
 #[component]
+fn ShipMunitionsPanel(
+    vm: ShipMunitionsVM,
+    on_upgrade_weapon: EventHandler<()>,
+    on_upgrade_plating: EventHandler<()>,
+    on_craft_drone: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "panel munitions",
+            div { class: "panel-title", "SHIP MUNITIONS" }
+            div { class: "muted", "Hull {vm.hull:.0}/{vm.hull_max:.0}  \u{00b7}  guns T{vm.weapon_tier}  \u{00b7}  plating T{vm.plating_tier}  \u{00b7}  drones {vm.repair_drones}" }
+            div { class: "contact-actions",
+                button { class: "mini", disabled: !vm.can_upgrade_weapon, onclick: move |_| on_upgrade_weapon.call(()), "Upgrade guns" }
+                button { class: "mini", disabled: !vm.can_upgrade_plating, onclick: move |_| on_upgrade_plating.call(()), "Upgrade plating" }
+                button { class: "mini", disabled: !vm.can_craft_drone, onclick: move |_| on_craft_drone.call(()), "Craft repair drone" }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn App() -> Element {
     let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
     let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
@@ -2012,6 +2032,35 @@ fn Console(
                                 let tc = TechRegistry(techs.read().clone());
                                 let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                                 if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::CraftConsumable(kind)); }
+                            },
+                        }
+                    }
+                    if let Some(vm) = munitions_vm.clone() {
+                        ShipMunitionsPanel {
+                            vm,
+                            on_upgrade_weapon: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeShipWeapon); }
+                            },
+                            on_upgrade_plating: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeHullPlating); }
+                            },
+                            on_craft_drone: move |_| {
+                                let t = tuning.read().clone();
+                                let j = JobRegistry(jobs.read().clone());
+                                let m = ModuleRegistry(modules.read().clone());
+                                let tc = TechRegistry(techs.read().clone());
+                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::CraftRepairDrone); }
                             },
                         }
                     }
