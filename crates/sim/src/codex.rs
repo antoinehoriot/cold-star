@@ -22,6 +22,13 @@ pub enum NoteId {
     FirstFaunaDisplaced,
     FirstShipContact,
     FirstShipCrippled,
+    TheWatched,
+    TheRuinsWereHome,
+    ThePeersWereYou,
+    EndingAscendant,
+    EndingCommunion,
+    EndingPatternBroken,
+    EndingCold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

@@ -37,7 +37,7 @@ const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
 /// Multiplier applied to `trade_get` when the alien is in the Curious band.
 pub const CURIOUS_TRADE_BONUS: f64 = 1.5;
 
-pub const SAVE_VERSION: u32 = 10;
+pub const SAVE_VERSION: u32 = 11;
 
 /// Content registries supplied to the engine each call (like `Tuning`, these are
 /// not part of the saved state).
@@ -2926,10 +2926,10 @@ mod tests {
     }
 
     #[test]
-    fn new_game_is_versioned_v10() {
+    fn new_game_is_versioned_v11() {
         let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
         let s = GameState::new(&world(&t, &j, &m, &tc), 1);
-        assert_eq!(s.version, 10);
+        assert_eq!(s.version, 11);
         assert_eq!(s.resources.cap, t.resource_base_cap);
     }
 
