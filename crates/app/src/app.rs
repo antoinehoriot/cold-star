@@ -87,6 +87,38 @@ struct LoadoutVM {
     consumables: Vec<(sim::gear::ConsumableKind, String, u32)>,
 }
 
+#[derive(Clone, PartialEq)]
+struct ContactVM {
+    kind: String, // "Peer" | "Remnant"
+    is_peer: bool,
+    in_combat: bool,
+    band: String, // "Hostile" | "Fearful" | "Neutral" | "Curious"
+    disposition: f64,
+    hull: f64,
+    hull_max: f64,
+    enemy_hp: f64,
+    stance: String,
+    repair_drones: u32,
+    // disable predicates — exact duals of the engine rejections
+    can_parley: bool,
+    can_trade: bool,
+    can_gift: bool,
+    can_avoid: bool,
+    can_flee: bool,
+}
+
+#[derive(Clone, PartialEq)]
+struct ShipMunitionsVM {
+    weapon_tier: u8,
+    plating_tier: u8,
+    hull: f64,
+    hull_max: f64,
+    repair_drones: u32,
+    can_upgrade_weapon: bool,
+    can_upgrade_plating: bool,
+    can_craft_drone: bool,
+}
+
 const CSS: &str = "
 :root { color-scheme: dark; }
 body { margin: 0; background: #05070a; color: #c7d3dd;
@@ -214,6 +246,11 @@ body { margin: 0; background: #05070a; color: #c7d3dd;
 .band-Curious { color: #6fd6a0; }
 .bar-disp > span { background: #9b7fd6; }
 .neg-actions { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.contact { border: 1px solid #3a2630; }
+.contact-actions { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.bar-hull > span { background: #6fb7d6; }
+.bar-enemy > span { background: #d66f6f; }
+.munitions { margin-top: 1rem; }
 ";
 
 #[component]
@@ -1377,6 +1414,81 @@ fn Console(
                 )
             })
             .collect(),
+        })
+    } else {
+        None
+    };
+    let contact_vm = gs.expedition.contact.as_ref().map(|c| {
+        use sim::contact::ShipKind;
+        let tn = tuning.read();
+        let in_combat = c.combat.is_some();
+        let is_peer = c.kind == ShipKind::Peer;
+        let band = sim::alien::band(c.disposition, &tn);
+        let not_hostile = band != sim::alien::Band::Hostile;
+        let tradeable = matches!(band, sim::alien::Band::Neutral | sim::alien::Band::Curious);
+        let components = gs
+            .expedition
+            .cargo
+            .get(&ResourceKind::Components)
+            .copied()
+            .unwrap_or(0.0);
+        // flee cost = jump_cost(distance(here, prev_location)). Galaxy needs only seed + tuning
+        // (no full World): `Galaxy::generate(gs.world_seed, tn)`. Reuse an in-scope galaxy binding
+        // if Console already built one for the nav rows.
+        let flee_cost = {
+            let g = sim::galaxy::Galaxy::generate(gs.world_seed, &tn);
+            match (
+                g.get(gs.expedition.location),
+                g.get(gs.expedition.prev_location),
+            ) {
+                (Some(a), Some(b)) => sim::galaxy::jump_cost(sim::galaxy::distance(a, b), &tn),
+                _ => sim::galaxy::jump_cost(1.0, &tn),
+            }
+        };
+        let fuel = gs.resources.amount(ResourceKind::Fuel);
+        ContactVM {
+            kind: format!("{:?}", c.kind),
+            is_peer,
+            in_combat,
+            band: format!("{band:?}"),
+            disposition: c.disposition,
+            hull: gs.ship.hull,
+            hull_max: gs.ship.hull_max(&tn),
+            enemy_hp: c.combat.as_ref().map(|cb| cb.enemy_hp).unwrap_or(0.0),
+            stance: c
+                .combat
+                .as_ref()
+                .map(|cb| format!("{:?}", cb.stance))
+                .unwrap_or_default(),
+            repair_drones: gs.ship.repair_drones,
+            can_parley: is_peer && !in_combat && not_hostile,
+            can_trade: is_peer && !in_combat && tradeable && components >= tn.trade_give,
+            can_gift: is_peer && !in_combat && components >= tn.gift_cost,
+            can_avoid: is_peer && !in_combat && not_hostile,
+            can_flee: fuel >= flee_cost,
+        }
+    });
+    let munitions_vm = if gs.flags.contains(&sim::flags::Flag::MunitionsKnown)
+        && gs.built_count(sim::module::ModuleId::Shipyard) > 0
+    {
+        let tn = tuning.read();
+        // VERIFIED: the three upgrade actions spend via `self.resources.try_spend_all(...)` —
+        // BOTH Alloy and Components come from station `gs.resources` (NOT expedition.cargo).
+        let alloy = gs.resources.amount(ResourceKind::Alloy);
+        let components = gs.resources.amount(ResourceKind::Components);
+        Some(ShipMunitionsVM {
+            weapon_tier: gs.ship.ship_weapon_tier,
+            plating_tier: gs.ship.hull_plating_tier,
+            hull: gs.ship.hull,
+            hull_max: gs.ship.hull_max(&tn),
+            repair_drones: gs.ship.repair_drones,
+            can_upgrade_weapon: gs.ship.ship_weapon_tier < 2
+                && alloy >= tn.ship_weapon_upgrade_alloy
+                && components >= tn.ship_weapon_upgrade_components,
+            can_upgrade_plating: gs.ship.hull_plating_tier < 2
+                && alloy >= tn.hull_plating_upgrade_alloy
+                && components >= tn.hull_plating_upgrade_components,
+            can_craft_drone: components >= tn.repair_drone_cost,
         })
     } else {
         None
