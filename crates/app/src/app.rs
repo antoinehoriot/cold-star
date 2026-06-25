@@ -588,60 +588,137 @@ body {
   width: 100%;
   height: 240px;
   display: block;
-  margin: .4rem 0 .6rem;
-  background: radial-gradient(circle at 50% 50%, #0a141c 0%, #070b10 70%);
+  margin: .5rem 0 0;
+  background: radial-gradient(80% 120% at 30% 0%, #0c1620, #070d13);
   border: 1px solid var(--line);
   border-radius: var(--r);
 }
-.range-ring { fill: rgba(111,183,214,.05); stroke: #2f6a80; stroke-width: .5; stroke-dasharray: 2 2; }
-.nav-edge { stroke: var(--line); stroke-width: .4; }
+/* live-tinted: stroke/fill use var(--accent) so the ring cools with expansion */
+.range-ring { fill: color-mix(in oklab, var(--accent), transparent 96%); stroke: var(--accent); stroke-width: .5; stroke-dasharray: 2 3; opacity: .45; }
+.nav-edge { stroke: var(--line); stroke-width: .8; }
 .sys { cursor: pointer; stroke: var(--void); stroke-width: .6; }
-.sys-current  { fill: var(--good); }
-.sys-reachable { fill: var(--accent); }
+/* current system: live-tinted accent (not --good green) so it cools with tier */
+.sys-current  { fill: var(--accent); }
+.sys-reachable { fill: #9fb3c2; }
 .sys-far       { fill: #3a4a55; }
 .sys-selected  { stroke: var(--text); stroke-width: 1.2; }
 .sys-home      { fill: var(--accent); stroke: color-mix(in oklab, var(--accent), white 20%); stroke-width: 1; }
-.sys-home-ring { fill: none; stroke: var(--accent); stroke-width: .6; opacity: .45; }
-.sys-home-label { fill: var(--accent); font-size: 6px; letter-spacing: .12em; }
+.sys-home-ring { fill: none; stroke: var(--accent); stroke-width: .8; opacity: .4; }
+.sys-home-label { fill: var(--muted); font-size: 9px; letter-spacing: .12em; font-family: 'IBM Plex Mono', monospace; }
 .star-Neutron  { }
 .star-Dead     { }
 .navmap circle.sys:hover { stroke: var(--text); stroke-width: 1.2; }
 
+/* ---- Nav detail panel */
+.nav-detail { border-top: 1px solid var(--line); margin-top: .6rem; padding-top: .6rem; }
+.nav-sys-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: .82rem;
+  padding: .3rem 0;
+  gap: .5rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.nav-sys-meta { color: var(--muted); }
+.nav-sys-actions { display: flex; gap: .3rem; align-items: center; }
+
 /* ---- Surface map SVG */
-.surface { border-color: color-mix(in oklab, var(--good), var(--line) 50%); }
-.surf-here   { font-size: .85rem; color: var(--text); margin: .3rem 0; }
-.surf-choice { border-left: 2px solid color-mix(in oklab, var(--accent), var(--line) 40%); padding-left: .6rem; margin: .4rem 0; }
+.surface { border-color: color-mix(in oklab, var(--accent), var(--line) 65%); }
+.surf-here   { font-size: .82rem; color: var(--muted); margin: .3rem 0; }
+/* surf-choice: accent-bordered pending panel */
+.surf-choice {
+  border-left: 2px solid color-mix(in oklab, var(--accent), var(--line) 40%);
+  padding: .5rem .5rem .5rem .7rem;
+  margin: .6rem 0;
+  background: color-mix(in oklab, var(--accent), transparent 96%);
+  border-radius: 0 var(--r) var(--r) 0;
+}
 .surfmap-scroll {
   width: 100%;
   max-height: 300px;
   overflow: auto;
-  margin: .4rem 0;
-  background: radial-gradient(circle at 50% 50%, #0a1810 0%, #070b08 70%);
-  border: 1px solid color-mix(in oklab, var(--good), var(--line) 60%);
+  margin: .5rem 0;
+  background: radial-gradient(80% 120% at 30% 0%, #0c1620, #070d13);
+  border: 1px solid var(--line);
   border-radius: var(--r);
 }
 .surfmap       { display: block; }
-.surf-edge     { stroke: #234; stroke-width: .6; }
+/* live-tinted: surf-edge uses var(--line) */
+.surf-edge     { stroke: var(--line); stroke-width: .8; }
 .surf-node     { cursor: pointer; stroke: var(--void); stroke-width: .6; }
-.surf-current  { fill: var(--good); }
-.surf-reach    { fill: var(--accent); }
-.surf-done     { fill: #2a3a30; }
-.surf-far      { fill: #3a4a44; }
-.kind-Hazard   { stroke: var(--fail); stroke-width: 1; }
+/* surf-current: live-tinted accent so it cools with tier */
+.surf-current  { fill: var(--accent); }
+.surf-reach    { fill: #9fb3c2; }
+.surf-done     { fill: #1e2d28; }
+.surf-far      { fill: #2a3840; }
+.kind-Hazard   { stroke: var(--fail); stroke-width: 1.2; }
+
+/* ---- Suit gauge */
+.suit-gauge {
+  height: 6px;
+  background: #0a1016;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: .35rem 0 .2rem;
+}
+.suit-gauge > i {
+  display: block;
+  height: 100%;
+  background: var(--good);
+  box-shadow: 0 0 8px var(--good);
+  transition: width .3s ease;
+}
+
+/* ---- Satchel rows */
+.satchel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: .82rem;
+  padding: .22rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.satchel-row:last-child { border-bottom: 0; }
 
 /* ---- Combat */
 .combat {
   border: 1px solid color-mix(in oklab, var(--fail), var(--line) 40%);
   border-radius: var(--r);
-  padding: .6rem .8rem;
-  margin: .4rem 0;
-  background: color-mix(in oklab, var(--fail), transparent 93%);
+  padding: .7rem .9rem;
+  margin: .6rem 0;
+  background: color-mix(in oklab, var(--fail), transparent 95%);
+}
+.combat-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: .68rem;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--fail);
+  margin-bottom: .4rem;
+  opacity: .8;
 }
 .combat-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; align-items: center; }
 
 /* ---- Negotiation */
-.neg        { margin-top: .6rem; border-top: 1px solid var(--line); padding-top: .6rem; }
-.neg-band   { font-size: .8rem; letter-spacing: .18em; }
+.neg {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: .7rem .9rem;
+  margin: .6rem 0;
+  background: linear-gradient(180deg, var(--fill), var(--fill-2));
+}
+.neg-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: .68rem;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: .4rem;
+}
+.neg-band   { font-size: .8rem; letter-spacing: .14em; font-weight: 500; margin-bottom: .25rem; }
 .neg-actions { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .4rem; }
 .band-Hostile { color: var(--fail); }
 .band-Fearful { color: var(--accent); }
@@ -1035,25 +1112,27 @@ fn NavigationPanel(
     let sel_row = rows.iter().find(|r| r.id == sel).cloned();
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "NAVIGATION" }
+            p { class: "eyebrow", "Navigation" }
             div { class: "muted",
-                "Drive {drive:.0}  \u{00b7}  Cargo {cargo_used:.0}/{cargo_max:.0}  \u{00b7}  Fuel {fuel:.0}  \u{00b7}  Isotopes {isotopes:.0}"
+                "Drive {drive:.0} \u{00b7} Cargo {cargo_used:.0}/{cargo_max:.0} \u{00b7} Fuel {fuel:.0} \u{00b7} Isotopes {isotopes:.0}"
             }
-            div { class: "nav-activity", "{activity_label}" }
+            if !activity_label.is_empty() {
+                div { class: "nav-activity", "{activity_label}" }
+            }
             if stranded {
                 button { class: "act", onclick: move |_| on_scavenge.call(()), "Scavenge fuel" }
             }
             if can_upgrade_drive {
                 button { class: "act", onclick: move |_| on_upgrade.call(()), "Recalibrate drive (+range)" }
             }
-            // SVG star map.
+            // SVG star map — live-tinted: range ring + current dot use var(--accent) via CSS.
             svg {
                 class: "navmap",
                 view_box: "{view}",
                 preserve_aspect_ratio: "xMidYMid meet",
-                // range ring
+                // range ring: styled via .range-ring (stroke: var(--accent))
                 circle { cx: 0, cy: 0, r: "{drive}", class: "range-ring" }
-                // edges from current to reachable systems (subtle)
+                // edges from current to reachable systems
                 for row in rows.iter().filter(|r| r.reachable) {
                     line {
                         x1: 0, y1: 0,
@@ -1078,11 +1157,11 @@ fn NavigationPanel(
                         let r_val = if is_home { "5.5" } else if row.is_current { "4.5" } else { "3.2" };
                         let cx_val = format!("{}", row.pos.0 - center.0);
                         let cy_val = format!("{}", row.pos.1 - center.1);
-                        let label_y = format!("{}", row.pos.1 - center.1 + 13.0);
+                        let label_y = format!("{}", row.pos.1 - center.1 + 14.0);
                         rsx! {
                             // The home station gets a halo + label so it always reads as "home".
                             if is_home {
-                                circle { cx: "{cx_val}", cy: "{cy_val}", r: "9", class: "sys-home-ring" }
+                                circle { cx: "{cx_val}", cy: "{cy_val}", r: "10", class: "sys-home-ring" }
                             }
                             circle {
                                 cx: "{cx_val}",
@@ -1110,19 +1189,21 @@ fn NavigationPanel(
                     div { class: "nav-row",
                         span {
                             if row.is_current { span { class: "nav-here", "\u{25c9} " } }
-                            "Sys {row.id.0} \u{00b7} {row.star} \u{00b7} {row.dist:.0} ly"
+                            span { class: "nav-sys-meta",
+                                "Sys {row.id.0} \u{00b7} {row.star} \u{00b7} {row.dist:.0} ly"
+                            }
                             if row.scanned { span { class: "muted", " \u{00b7} scanned" } } else { span { class: "muted", " \u{00b7} unscanned" } }
                         }
-                        span {
+                        span { class: "nav-sys-actions",
                             if !row.is_current && has_sensor && !row.scanned {
-                                button { class: "mini", disabled: busy, onclick: move |_| on_scan.call(row.id), "scan" }
+                                button { class: "mini", disabled: busy, onclick: move |_| on_scan.call(row.id), "Scan" }
                             }
                             if row.reachable {
                                 button {
-                                    class: "mini",
+                                    class: "act",
                                     disabled: busy || !row.affordable,
                                     onclick: move |_| on_jump.call(row.id),
-                                    if row.affordable { "jump ({row.cost:.0} fuel)" } else { "jump (low fuel)" }
+                                    if row.affordable { "Jump \u{00b7} {row.cost:.0} fuel" } else { "Jump (low fuel)" }
                                 }
                             }
                         }
@@ -1132,7 +1213,7 @@ fn NavigationPanel(
                             span { "{kind}" if depleted { span { class: "muted", " \u{00b7} stripped" } } }
                             if row.is_current && !depleted {
                                 if landable {
-                                    button { class: "mini", disabled: busy, onclick: move |_| on_land.call(idx), "land" }
+                                    button { class: "act", disabled: busy, onclick: move |_| on_land.call(idx), "Land" }
                                 } else {
                                     button { class: "mini", disabled: busy, onclick: move |_| on_resolve.call((row.id, idx)), "work" }
                                 }
@@ -1140,7 +1221,7 @@ fn NavigationPanel(
                         }
                     }
                     if !row.scanned && row.sites.is_empty() {
-                        div { class: "muted", "Scan to reveal what's here." }
+                        div { class: "muted", "Scan to reveal what\u{2019}s here." }
                     }
                 }
             }
@@ -1327,27 +1408,34 @@ fn SurfaceView(
 
     rsx! {
         div { class: "panel surface",
-            div { class: "panel-title", "SURFACE \u{00b7} {vm.biome}" }
-            div { class: "muted", "Suit {vm.suit:.0} / {vm.suit_max:.0}" }
-            div { class: "bar bar-suit", span { style: "width: {suit_pct}%" } }
-            div { class: "surf-here", "You are at: {vm.encounter} (depth {vm.depth})" }
+            p { class: "eyebrow", "Surface \u{00b7} {vm.biome}" }
+            // Suit integrity gauge
+            p { class: "eyebrow", style: "margin-top: .6rem;", "Suit integrity" }
+            div { class: "suit-gauge", i { style: "width: {suit_pct}%" } }
+            div { class: "muted", style: "font-size: .75rem; margin: .15rem 0 .4rem;",
+                "{vm.suit:.0} / {vm.suit_max:.0} \u{00b7} {vm.encounter} (depth {vm.depth})"
+            }
             if busy { div { class: "muted", "Crossing the ground\u{2026} {vm.traverse}s" } }
-            div { class: "panel-title", "SATCHEL" }
+            // Satchel
+            p { class: "eyebrow", style: "margin-top: .7rem;", "Satchel" }
             if vm.satchel.is_empty() { div { class: "muted", "empty" } }
             for (name, amt) in vm.satchel.clone() {
-                div { class: "res-row", span { "{name}" } span { "{amt:.0}" } }
+                div { class: "satchel-row", span { "{name}" } span { class: "num", "{amt:.0}" } }
             }
+            // Sub-states: combat → negotiation → pending-choice → node-graph map (order unchanged)
             if let Some(c) = vm.combat.clone() {
                 div { class: "combat",
-                    div { class: "panel-title", "CONTACT \u{2014} REMNANT" }
+                    div { class: "combat-title", "Contact \u{2014} Remnant" }
                     div { class: "muted", "Enemy hull {c.enemy_hp:.0}" }
                     div { class: "bar bar-enemy", span { style: "width: {(c.enemy_hp).clamp(0.0,100.0)}%" } }
-                    div { class: "muted", "{drift_word(DriftSlot::AwayTeam, tier)} \u{00d7}{vm.away_crew}  \u{00b7}  HP {vm.squad_hp:.0}/{vm.squad_hp_max:.0}  \u{00b7}  morale {vm.morale:.0}" }
+                    div { class: "muted",
+                        "{drift_word(DriftSlot::AwayTeam, tier)} \u{00d7}{vm.away_crew} \u{00b7} HP {vm.squad_hp:.0}/{vm.squad_hp_max:.0} \u{00b7} morale {vm.morale:.0}"
+                    }
                     div { class: "bar bar-hp", span { style: "width: {squad_hp_pct}%" } }
                     div { class: "bar bar-morale", span { style: "width: {morale_pct}%" } }
-                    if c.shield_ticks > 0 { div { class: "muted", "shield {c.shield_ticks}s" } }
+                    if c.shield_ticks > 0 { div { class: "muted", "Shield {c.shield_ticks}s" } }
                     div { class: "combat-actions",
-                        button { class: "mini", onclick: move |_| on_stance.call(()), "stance: {c.stance}" }
+                        button { class: "mini", onclick: move |_| on_stance.call(()), "Stance: {c.stance}" }
                         for (kind, label, count) in vm.consumables.clone() {
                             {
                                 let kind = kind;
@@ -1361,7 +1449,7 @@ fn SurfaceView(
                 }
             } else if let Some(neg) = vm.negotiation.clone() {
                 div { class: "neg",
-                    div { class: "panel-title", "CONTACT \u{2014} {neg.kind}" }
+                    div { class: "neg-title", "Contact \u{2014} {neg.kind}" }
                     div { class: "neg-band band-{neg.band}", "Disposition: {neg.band} ({neg.disposition:.0})" }
                     div { class: "bar bar-disp", span { style: "width: {disp_pct}%" } }
                     div { class: "muted",
@@ -1386,10 +1474,11 @@ fn SurfaceView(
                 div { class: "surf-choice",
                     div { class: "muted", "Something living. It has not noticed you yet." }
                     button { class: "act", onclick: move |_| on_harvest.call(()), "{drift_word(DriftSlot::Take, tier)} it" }
-                    button { class: "act", onclick: move |_| on_leave.call(()), "Leave it" }
+                    button { class: "act ghost", onclick: move |_| on_leave.call(()), "Leave it" }
                 }
             } else {
                 // SVG node-graph map — scrollable, pixel-sized to content.
+                // live-tinted: surf-current uses var(--accent) via CSS
                 div { class: "surfmap-scroll",
                 svg {
                     class: "surfmap",
