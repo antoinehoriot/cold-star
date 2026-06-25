@@ -366,8 +366,8 @@ body {
 .log-line { color: var(--muted); padding: .05rem 0; }
 
 /* ---- Dashboard two-column grid */
-.dash { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.4rem; }
-.col { display: flex; flex-direction: column; gap: 1rem; }
+.dash { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 1.4rem; }
+.col { display: flex; flex-direction: column; gap: 14px; }
 
 /* ---- Panel */
 .panel {
@@ -421,6 +421,22 @@ body {
 .res-net-up   { color: var(--good); }
 .res-net-down { color: var(--fail); }
 .res-full     { color: var(--accent); }
+
+/* ---- Module card grid */
+.mods { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: .6rem; }
+.mod { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; background: #0b121a; }
+.mod b { font-family: var(--display); font-weight: 500; font-size: 15px; display: block; letter-spacing: .02em; }
+.mod .tag { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin-top: 3px; display: block; }
+.mod.dim { opacity: .45; pointer-events: none; }
+
+/* ---- Eyebrow (panel section header) */
+.eyebrow { font-family: var(--display); font-weight: 600; letter-spacing: .26em; text-transform: uppercase; font-size: 11px; color: var(--muted); margin: 0 0 8px; }
+
+/* ---- Net-rate value helpers */
+.num { font-variant-numeric: tabular-nums; }
+.up { color: var(--good); }
+.down { color: var(--fail); }
+.mut { color: var(--muted); }
 
 /* ---- Muted label */
 .muted { color: var(--muted); font-size: .8rem; }
@@ -732,13 +748,27 @@ fn PowerMeter(
     let draw_pct = (active_draw / scale * 100.0).clamp(0.0, 100.0);
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "REACTOR" }
+            p { class: "eyebrow", "Reactor" }
             div { class: "status status-{status}", "{status}" }
-            div { class: "muted", "Output {generation:.1}  \u{00b7}  Draw {active_draw:.1}" }
+            div { class: "res-row",
+                span { "Output" }
+                span { class: "num", "{generation:.1}" }
+            }
             div { class: "bar bar-gen", span { style: "width: {gen_pct}%" } }
+            div { class: "res-row",
+                span { "Draw" }
+                span { class: "num", "{active_draw:.1}" }
+            }
             div { class: "bar bar-draw", span { style: "width: {draw_pct}%" } }
-            div { class: "muted", "Charge {charge:.0} / {capacity:.0}  \u{00b7}  Fuel {fuel:.0}" }
+            div { class: "res-row",
+                span { "Charge" }
+                span { class: "num", "{charge:.0} / {capacity:.0}" }
+            }
             div { class: "bar bar-charge", span { style: "width: {charge_pct}%" } }
+            div { class: "res-row",
+                span { "Fuel" }
+                span { class: "num", "{fuel:.0}" }
+            }
         }
     }
 }
@@ -748,7 +778,7 @@ fn ResourcesPanel(rows: Vec<(String, f64, f64, f64, bool)>) -> Element {
     // rows: (name, amount, cap, net, at_cap)
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "RESOURCES" }
+            p { class: "eyebrow", "Resources \u{00b7} net / tick" }
             for (name, amount, cap, net, at_cap) in rows {
                 div { class: "res-row",
                     span {
@@ -756,12 +786,14 @@ fn ResourcesPanel(rows: Vec<(String, f64, f64, f64, bool)>) -> Element {
                         "{name}"
                         if at_cap { span { class: "res-full", " (full)" } }
                     }
-                    span {
-                        "{amount:.0} / {cap:.0}  "
+                    span { class: "num",
+                        "{amount:.0}"
+                        if cap.is_finite() && cap < 1e9 { span { class: "mut", " / {cap:.0}" } }
+                        " \u{00a0}"
                         if net > 0.0 {
-                            span { class: "res-net-up", "\u{25b2}{net:.1}" }
+                            span { class: "mut up", "+{net:.1}" }
                         } else if net < 0.0 {
-                            span { class: "res-net-down", "\u{25bc}{(-net):.1}" }
+                            span { class: "mut down", "\u{2212}{(-net):.1}" }
                         }
                     }
                 }
@@ -780,13 +812,17 @@ fn JobPanel(
 ) -> Element {
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "CREW" }
-            div { class: "idle", "Idle: {idle}" }
+            p { class: "eyebrow", "Crew" }
+            div { class: "res-row",
+                span { "Idle" }
+                span { class: "num", "{idle}" }
+            }
             if starving { div { class: "starving", "{starving_label}" } }
             for (id, name, count, has_crew, dark) in rows {
                 div { class: "job-row",
                     span {
-                        "{name} \u{d7}{count}"
+                        "{name}"
+                        span { class: "mut", " \u{00d7}{count}" }
                         if has_crew && dark == "power" { span { class: "badge badge-power", "\u{23f8} no power" } }
                         if has_crew && dark == "input" { span { class: "badge badge-input", "\u{25bd} no input" } }
                     }
@@ -820,35 +856,33 @@ fn BuildMenu(
     let mut info_open = use_signal(|| None::<sim::module::ModuleId>);
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "BUILD" }
-            for (id, name, description, cost, n, affordable) in rows {
-                div { class: "build-row",
-                    span {
-                        "{name}"
-                        if n > 0 { span { class: "muted", " ({n})" } }
-                        div { class: "cost", "{cost}" }
-                    }
-                    span {
-                        button {
-                            class: "mini info",
-                            title: "What is this?",
-                            onclick: move |_| {
-                                let next = if info_open() == Some(id) { None } else { Some(id) };
-                                info_open.set(next);
-                            },
-                            "i"
+            p { class: "eyebrow", "Modules" }
+            div { class: "mods",
+                for (id, name, description, cost, n, affordable) in rows {
+                    div { class: if affordable { "mod" } else { "mod dim" },
+                        b { "{name}" if n > 0 { span { class: "mut", " ({n})" } } }
+                        span { class: "tag", "{cost}" }
+                        if info_open() == Some(id) {
+                            div { class: "build-desc", "{description}" }
                         }
-                        button {
-                            class: "mini",
-                            disabled: !affordable,
-                            onclick: move |_| on_build.call(id),
-                            "build"
+                        div { style: "margin-top: 8px; display: flex; gap: 4px; align-items: center;",
+                            button {
+                                class: "mini info",
+                                title: "What is this?",
+                                onclick: move |_| {
+                                    let next = if info_open() == Some(id) { None } else { Some(id) };
+                                    info_open.set(next);
+                                },
+                                "i"
+                            }
+                            button {
+                                class: "mini",
+                                disabled: !affordable,
+                                onclick: move |_| on_build.call(id),
+                                "build"
+                            }
                         }
-                        if !affordable { span { class: "muted", " (can't afford)" } }
                     }
-                }
-                if info_open() == Some(id) {
-                    div { class: "build-desc", "{description}" }
                 }
             }
         }
@@ -862,8 +896,8 @@ fn PriorityPanel(
 ) -> Element {
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "POWER PRIORITY" }
-            div { class: "muted", "higher = browns out last" }
+            p { class: "eyebrow", "Power Priority" }
+            p { class: "muted", "higher = browns out last" }
             for (c, name, is_first, is_last) in rows {
                 div { class: "prio-row",
                     span { "{name}" }
@@ -896,7 +930,7 @@ fn ResearchPanel(
 ) -> Element {
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "RESEARCH" }
+            p { class: "eyebrow", "Research" }
             if let Some((name, rem, total)) = active {
                 {
                     let done = total.saturating_sub(rem);
@@ -947,7 +981,7 @@ fn CodexPanel(entries: Vec<(String, String)>) -> Element {
     let mut open = use_signal(|| None::<usize>);
     rsx! {
         div { class: "panel",
-            div { class: "panel-title", "CODEX" }
+            p { class: "eyebrow", "Codex" }
             for (i, (title, text)) in entries.into_iter().enumerate() {
                 div {
                     class: "codex-row",
