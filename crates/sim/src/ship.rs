@@ -12,6 +12,7 @@ pub struct Ship {
     pub hull: f64,
     pub ship_weapon_tier: u8,
     pub hull_plating_tier: u8,
+    pub repair_drones: u32,
 }
 
 impl Ship {
@@ -23,6 +24,7 @@ impl Ship {
             hull: t.ship_base_hull,
             ship_weapon_tier: 0,
             hull_plating_tier: 0,
+            repair_drones: 0,
         }
     }
 

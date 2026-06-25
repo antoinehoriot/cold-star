@@ -86,6 +86,10 @@ pub enum Action {
     HailTrade,
     HailGift,
     HailAvoid,
+    AttackShip,
+    SetShipStance(crate::combat::Stance),
+    UseRepairDrone,
+    ShipFlee,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1540,6 +1544,97 @@ impl GameState {
                 self.log.push(
                     self.tick,
                     "You give them a wide berth. They let you go.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            // ── CB3 ship combat inputs ──────────────────────────────────────
+            Action::AttackShip => {
+                let contact = match self.expedition.contact.as_ref() {
+                    Some(c) => c.clone(),
+                    None => return Err(Rejected("no contact to attack")),
+                };
+                if contact.combat.is_some() {
+                    return Err(Rejected("already in ship combat"));
+                }
+                let grad = self.system_gradient(world, self.expedition.location);
+                let combat = match contact.kind {
+                    crate::contact::ShipKind::Peer => {
+                        crate::contact::peer_ship_stats(0, grad, &self.ship, tuning)
+                    }
+                    crate::contact::ShipKind::Remnant => {
+                        crate::contact::remnant_ship_stats(0, grad, tuning)
+                    }
+                };
+                if let Some(c) = self.expedition.contact.as_mut() {
+                    c.combat = Some(combat);
+                }
+                self.log.push(
+                    self.tick,
+                    "You open fire. The dark lights up.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::SetShipStance(stance) => {
+                let has_combat = self
+                    .expedition
+                    .contact
+                    .as_ref()
+                    .map(|c| c.combat.is_some())
+                    .unwrap_or(false);
+                if !has_combat {
+                    return Err(Rejected("no active ship combat"));
+                }
+                if let Some(c) = self.expedition.contact.as_mut()
+                    && let Some(combat) = c.combat.as_mut()
+                {
+                    combat.stance = stance;
+                }
+                Ok(())
+            }
+            Action::UseRepairDrone => {
+                let has_combat = self
+                    .expedition
+                    .contact
+                    .as_ref()
+                    .map(|c| c.combat.is_some())
+                    .unwrap_or(false);
+                if !has_combat {
+                    return Err(Rejected("no active ship combat"));
+                }
+                if self.ship.repair_drones == 0 {
+                    return Err(Rejected("no repair drones in stock"));
+                }
+                let hull_max = self.ship.hull_max(tuning);
+                self.ship.hull = (self.ship.hull + tuning.repair_drone_heal).min(hull_max);
+                self.ship.repair_drones -= 1;
+                self.log.push(
+                    self.tick,
+                    "A repair drone seals the breach. Hull stable.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
+            Action::ShipFlee => {
+                if self.expedition.contact.is_none() {
+                    return Err(Rejected("no contact to flee from"));
+                }
+                let here = self.expedition.location;
+                let prev = self.expedition.prev_location;
+                let galaxy = self.galaxy(world);
+                let cost = match (galaxy.get(here), galaxy.get(prev)) {
+                    (Some(h), Some(p)) => jump_cost(distance(h, p), tuning),
+                    _ => jump_cost(1.0, tuning), // fallback: minimum cost
+                };
+                if !self.resources.try_spend(ResourceKind::Fuel, cost) {
+                    return Err(Rejected("no fuel to break contact"));
+                }
+                self.expedition.contact = None;
+                self.expedition.location = prev;
+                self.log.push(
+                    self.tick,
+                    "You burn hard and break contact. The system falls behind you.",
                     tuning.log_capacity,
                 );
                 Ok(())
@@ -4683,5 +4778,335 @@ mod tests {
             s.expedition.contact.is_some(),
             "contact must remain open after rejection"
         );
+    }
+
+    // ── CB3 Task 8: ship combat inputs ────────────────────────────────────────
+
+    /// AttackShip on a Peer negotiation Contact opens ship combat with sane stats.
+    /// Crucially: enemy_hp must be < 500 (depth=0 scaling only, not distance).
+    #[test]
+    fn attack_ship_peer_starts_combat_sane_stats() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        let system = crate::galaxy::SystemId(11);
+        s.expedition.location = system;
+        // Peer in negotiation mode (no combat yet).
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: None,
+        });
+
+        s.apply(&w, Action::AttackShip).unwrap();
+
+        let combat = s
+            .expedition
+            .contact
+            .as_ref()
+            .expect("contact still present")
+            .combat
+            .as_ref()
+            .expect("combat now set");
+        assert!(
+            combat.enemy_hp > 0.0,
+            "enemy_hp must be positive (got {})",
+            combat.enemy_hp
+        );
+        // Depth=0 scaling: enemy_hp = peer_ship_hp * grad * mirror.
+        // At system 11 from HOME the grad is small; with depth distance-as-depth
+        // the value would be enormous. Cap at 500 as the regression guard.
+        assert!(
+            combat.enemy_hp < 500.0,
+            "enemy_hp < 500 (depth=0 guard, got {})",
+            combat.enemy_hp
+        );
+    }
+
+    /// AttackShip on a Remnant contact opens combat.
+    #[test]
+    fn attack_ship_remnant_starts_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        s.expedition.location = crate::galaxy::SystemId(12);
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Remnant,
+            disposition: 0.0,
+            combat: None,
+        });
+
+        s.apply(&w, Action::AttackShip).unwrap();
+        assert!(
+            s.expedition.contact.as_ref().unwrap().combat.is_some(),
+            "combat opened for Remnant"
+        );
+    }
+
+    /// AttackShip is rejected when there is no contact.
+    #[test]
+    fn attack_ship_rejected_no_contact() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let err = s.apply(&w, Action::AttackShip).unwrap_err();
+        assert!(err.0.contains("no contact"), "got: {}", err.0);
+    }
+
+    /// AttackShip is rejected when combat is already ongoing.
+    #[test]
+    fn attack_ship_rejected_already_fighting() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(13);
+        let grad = 1.0;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: Some(crate::contact::peer_ship_stats(0, grad, &s.ship, &t)),
+        });
+        let err = s.apply(&w, Action::AttackShip).unwrap_err();
+        assert!(err.0.contains("already"), "got: {}", err.0);
+    }
+
+    /// SetShipStance flips the combat stance.
+    #[test]
+    fn set_ship_stance_flips_stance() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(14);
+        let grad = 1.0;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: Some(crate::contact::peer_ship_stats(0, grad, &s.ship, &t)),
+        });
+        // Default stance is Aggressive; switch to Defensive.
+        s.apply(&w, Action::SetShipStance(crate::combat::Stance::Defensive))
+            .unwrap();
+        let stance = s
+            .expedition
+            .contact
+            .as_ref()
+            .unwrap()
+            .combat
+            .as_ref()
+            .unwrap()
+            .stance;
+        assert_eq!(
+            stance,
+            crate::combat::Stance::Defensive,
+            "stance is now Defensive"
+        );
+
+        // Switch back.
+        s.apply(&w, Action::SetShipStance(crate::combat::Stance::Aggressive))
+            .unwrap();
+        let stance2 = s
+            .expedition
+            .contact
+            .as_ref()
+            .unwrap()
+            .combat
+            .as_ref()
+            .unwrap()
+            .stance;
+        assert_eq!(
+            stance2,
+            crate::combat::Stance::Aggressive,
+            "stance toggled back"
+        );
+    }
+
+    /// SetShipStance rejected when no active ship combat.
+    #[test]
+    fn set_ship_stance_rejected_no_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let err = s
+            .apply(&w, Action::SetShipStance(crate::combat::Stance::Defensive))
+            .unwrap_err();
+        assert!(err.0.contains("no active ship combat"), "got: {}", err.0);
+    }
+
+    /// UseRepairDrone heals hull by repair_drone_heal (clamped to hull_max)
+    /// and decrements repair_drones.
+    #[test]
+    fn use_repair_drone_heals_and_decrements() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(15);
+        let grad = 1.0;
+        // Damage the hull first.
+        let hull_max = s.ship.hull_max(&t);
+        s.ship.hull = hull_max - t.repair_drone_heal - 5.0;
+        s.ship.repair_drones = 1;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: Some(crate::contact::peer_ship_stats(0, grad, &s.ship, &t)),
+        });
+        let hull_before = s.ship.hull;
+        s.apply(&w, Action::UseRepairDrone).unwrap();
+
+        let expected = (hull_before + t.repair_drone_heal).min(hull_max);
+        assert!(
+            (s.ship.hull - expected).abs() < 1e-9,
+            "hull healed: got {}, want {}",
+            s.ship.hull,
+            expected
+        );
+        assert_eq!(s.ship.repair_drones, 0, "drone count decremented");
+    }
+
+    /// UseRepairDrone clamps heal at hull_max.
+    #[test]
+    fn use_repair_drone_clamps_at_hull_max() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(16);
+        let grad = 1.0;
+        let hull_max = s.ship.hull_max(&t);
+        // Hull already near full.
+        s.ship.hull = hull_max - 1.0;
+        s.ship.repair_drones = 1;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: Some(crate::contact::peer_ship_stats(0, grad, &s.ship, &t)),
+        });
+        s.apply(&w, Action::UseRepairDrone).unwrap();
+        assert!(
+            (s.ship.hull - hull_max).abs() < 1e-9,
+            "hull clamped to hull_max: got {}, want {}",
+            s.ship.hull,
+            hull_max
+        );
+    }
+
+    /// UseRepairDrone rejected when no active combat.
+    #[test]
+    fn use_repair_drone_rejected_no_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.repair_drones = 3;
+        let err = s.apply(&w, Action::UseRepairDrone).unwrap_err();
+        assert!(err.0.contains("no active ship combat"), "got: {}", err.0);
+    }
+
+    /// UseRepairDrone rejected when out of stock.
+    #[test]
+    fn use_repair_drone_rejected_out_of_stock() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(17);
+        let grad = 1.0;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: Some(crate::contact::peer_ship_stats(0, grad, &s.ship, &t)),
+        });
+        // repair_drones = 0 (default)
+        let err = s.apply(&w, Action::UseRepairDrone).unwrap_err();
+        assert!(err.0.contains("no repair drones"), "got: {}", err.0);
+    }
+
+    /// ShipFlee clears contact, moves to prev_location, and spends Fuel.
+    #[test]
+    fn ship_flee_clears_contact_and_spends_fuel() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+
+        let away_system = crate::galaxy::SystemId(5);
+        let prev_system = crate::galaxy::HOME;
+        s.expedition.location = away_system;
+        s.expedition.prev_location = prev_system;
+        // Give enough fuel to flee.
+        s.resources.fuel = 9999.0;
+        let fuel_before = s.resources.fuel;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: None,
+        });
+
+        s.apply(&w, Action::ShipFlee).unwrap();
+
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact cleared after ShipFlee"
+        );
+        assert_eq!(
+            s.expedition.location, prev_system,
+            "location is now prev_location"
+        );
+        // NOT in resolved_contacts (we fled, not resolved).
+        assert!(
+            !s.resolved_contacts.contains(&away_system.0),
+            "ShipFlee must NOT mark system resolved"
+        );
+        let fuel_after = s.resources.fuel;
+        assert!(
+            fuel_after < fuel_before,
+            "fuel spent fleeing: before={fuel_before} after={fuel_after}"
+        );
+    }
+
+    /// ShipFlee is rejected when Fuel is insufficient.
+    #[test]
+    fn ship_flee_rejected_no_fuel() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        s.ship.built = true;
+        s.expedition.location = crate::galaxy::SystemId(6);
+        s.expedition.prev_location = crate::galaxy::HOME;
+        // No fuel at all.
+        s.resources.fuel = 0.0;
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: None,
+        });
+
+        let err = s.apply(&w, Action::ShipFlee).unwrap_err();
+        assert!(
+            err.0.contains("no fuel"),
+            "expected no-fuel rejection, got: {}",
+            err.0
+        );
+        // Contact must remain.
+        assert!(
+            s.expedition.contact.is_some(),
+            "contact remains after failed flee"
+        );
+    }
+
+    /// ShipFlee is rejected when no contact is present.
+    #[test]
+    fn ship_flee_rejected_no_contact() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        let err = s.apply(&w, Action::ShipFlee).unwrap_err();
+        assert!(err.0.contains("no contact"), "got: {}", err.0);
     }
 }
