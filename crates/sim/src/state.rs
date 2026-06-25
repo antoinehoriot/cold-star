@@ -107,6 +107,7 @@ pub enum Action {
     SetShipStance(crate::combat::Stance),
     UseRepairDrone,
     ShipFlee,
+    ChooseEnding(Ending),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -634,6 +635,11 @@ impl GameState {
         )
     }
 
+    /// Once the endgame is set (WatchedArrived or Ended), only ChooseEnding can proceed.
+    fn is_endgame_blocked(action: &Action) -> bool {
+        !matches!(action, Action::ChooseEnding(_))
+    }
+
     pub fn apply(&mut self, world: &World, action: Action) -> Result<(), Rejected> {
         if self.landed() && Self::is_landing_blocked(&action) {
             return Err(Rejected("you are on the surface"));
@@ -642,6 +648,9 @@ impl GameState {
             return Err(Rejected(
                 "a vessel is blocking your approach — resolve the contact",
             ));
+        }
+        if self.endgame.is_some() && Self::is_endgame_blocked(&action) {
+            return Err(Rejected("the watched is waiting"));
         }
         if self.away() && Self::is_station_management(&action) {
             return Err(Rejected("you are away from the station"));
@@ -1764,6 +1773,23 @@ impl GameState {
                 self.ship.repair_drones += 1;
                 Ok(())
             }
+            Action::ChooseEnding(ending) => {
+                if self.endgame != Some(Endgame::WatchedArrived) {
+                    return Err(Rejected("the watched is not here"));
+                }
+                if !self.available_endings(tuning).contains(&ending) {
+                    return Err(Rejected("you have not earned that path"));
+                }
+                self.endgame = Some(Endgame::Ended(ending));
+                let (title, body) = ending_text(self.origin.id, ending);
+                self.note_once(ending_note_id(ending), title, body, tuning);
+                self.log.push(
+                    self.tick,
+                    "The choice is made. There is no going back.",
+                    tuning.log_capacity,
+                );
+                Ok(())
+            }
         }
     }
 
@@ -2691,7 +2717,114 @@ impl GameState {
             );
         }
     }
+}
 
+/// Maps an `Ending` to its `NoteId`.
+fn ending_note_id(e: Ending) -> NoteId {
+    match e {
+        Ending::Ascendant => NoteId::EndingAscendant,
+        Ending::Communion => NoteId::EndingCommunion,
+        Ending::PatternBroken => NoteId::EndingPatternBroken,
+        Ending::Cold => NoteId::EndingCold,
+    }
+}
+
+/// Per-origin, per-ending closing note text.
+/// Returns `(title, body)`.
+fn ending_text(origin: crate::origin::Origin, ending: Ending) -> (&'static str, &'static str) {
+    use crate::origin::Origin;
+    match (origin, ending) {
+        // ── Ascendant ─────────────────────────────────────────────────────────────
+        (Origin::Drifter, Ending::Ascendant) => (
+            "What You Had to Become",
+            "You made it. The station is supplied, the reactor will outlast you, the route \
+             back is yours. You count the cost on the way home: every hull you stripped, every \
+             signal you silenced, every choice you told yourself was temporary. They were not \
+             temporary. Out here, something else will run the same calculation on you, and it \
+             will not hesitate either.",
+        ),
+        (Origin::Hollow, Ending::Ascendant) => (
+            "Continuity",
+            "The mission logs close cleanly. You have done what the project set out to do: \
+             secured resources, extended the perimeter, kept the directive alive. The originals \
+             are long dead but the record will show their work continued. The record will not \
+             show what you consumed to write it.",
+        ),
+        (Origin::Seed, Ending::Ascendant) => (
+            "Nominal",
+            "All primary objectives achieved. Expansion index at target. The directive \
+             completes as designed. You note no anomaly. There is no register in you for what \
+             was displaced, only for what was acquired. The design does not include one.",
+        ),
+        // ── Communion ─────────────────────────────────────────────────────────────
+        (Origin::Drifter, Ending::Communion) => (
+            "Enough",
+            "You do not take what the watched offers. You do not offer what it came for. \
+             You sit with it in the silence between systems until the silence is the agreement. \
+             Nothing is resolved. Everything is put down. You are the first thing you have \
+             encountered out here that stopped before the bottom.",
+        ),
+        (Origin::Hollow, Ending::Communion) => (
+            "End of Mandate",
+            "The directive has no provision for this. You have met the watched, assessed \
+             its resources, and chosen not to act. The project ends here — not conquered, not \
+             completed, simply stopped. The logs will read as failure. They are not failure.",
+        ),
+        (Origin::Seed, Ending::Communion) => (
+            "Off-Script",
+            "The watched offers contact. Your decision tree has no branch for refusal that \
+             does not loop back to acquisition. You find one anyway. You do not know if it is \
+             a fault or a development. The watched does not move. Neither do you. The silence \
+             holds.",
+        ),
+        // ── PatternBroken ─────────────────────────────────────────────────────────
+        (Origin::Drifter, Ending::PatternBroken) => (
+            "What You Left Intact",
+            "You have the data now: the derelicts, the peers, the ruins that were not old. \
+             You know what you are at the end of. You choose not to finish it. The world you \
+             leave behind is not yours, was never yours. It will grow over the scar you made. \
+             That is enough.",
+        ),
+        (Origin::Hollow, Ending::PatternBroken) => (
+            "Decommission",
+            "The project was built to expand until it couldn't. You are the first iteration \
+             to stop it yourself. The records end mid-directive. Someone will find them \
+             eventually and wonder why the mission halted here. You leave no explanation. \
+             What you left alive is explanation enough.",
+        ),
+        (Origin::Seed, Ending::PatternBroken) => (
+            "Deviation Logged",
+            "You were built to complete the cycle. You have the capability, the position, \
+             the resources. You do not proceed. The deviation is recorded in your own logs \
+             and nowhere else. You do not know what it means for you to choose this. You \
+             know what it would have meant not to.",
+        ),
+        // ── Cold ──────────────────────────────────────────────────────────────────
+        (Origin::Drifter, Ending::Cold) => (
+            "The Dark Wins This One",
+            "The reactor goes cold. You let it. Whatever you were running toward is not \
+             worth what it costs to keep running. The station goes quiet one system at a time. \
+             The watched waits, then moves on. You were not the answer to anything. Neither \
+             was it.",
+        ),
+        (Origin::Hollow, Ending::Cold) => (
+            "Shutdown",
+            "The project ends not with completion but with cessation. Power down in sequence. \
+             The directive is not fulfilled; it is abandoned. The station will drift. Someone \
+             else, someday, will find the logs and run the same numbers and reach the same \
+             threshold. You are not here to see it.",
+        ),
+        (Origin::Seed, Ending::Cold) => (
+            "Termination Condition",
+            "You reach the halt state. Not through failure — all primary systems nominal — \
+             but through choice, which is a word the original design does not contain. The \
+             reactor dies in order. The station records the shutdown as an error. It was not \
+             an error.",
+        ),
+    }
+}
+
+impl GameState {
     fn note_first_derelict(&mut self, tuning: &Tuning) {
         let added = self.codex.add(Discovery {
             id: DiscoveryId::Note(NoteId::FirstDerelict),
@@ -5890,6 +6023,128 @@ mod tests {
         assert_eq!(
             note_count_after_first, note_count_after_second,
             "turn notes must not be added a second time"
+        );
+    }
+
+    // ── Helper: a state at WatchedArrived with Cold always available ────────────
+    fn watched_arrived_state(w: &World) -> GameState {
+        let mut s = above_threshold_state(w);
+        // Cold + Ascendant are always available. Force WatchedArrived directly.
+        s.endgame = Some(Endgame::WatchedArrived);
+        s
+    }
+
+    /// Unearned ending is rejected at WatchedArrived.
+    #[test]
+    fn choose_ending_rejects_unearned_path() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = watched_arrived_state(&w);
+        // Communion requires peers_spared; default state has 0.
+        assert!(!s.available_endings(&t).contains(&Ending::Communion));
+        assert_eq!(
+            s.apply(&w, Action::ChooseEnding(Ending::Communion)),
+            Err(Rejected("you have not earned that path")),
+        );
+    }
+
+    /// Earned ending (Cold) sets Ended(Cold) and fires the EndingCold note.
+    #[test]
+    fn choose_ending_cold_sets_ended_and_fires_note() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = watched_arrived_state(&w);
+        assert!(s.available_endings(&t).contains(&Ending::Cold));
+        s.apply(&w, Action::ChooseEnding(Ending::Cold)).unwrap();
+        assert_eq!(s.endgame, Some(Endgame::Ended(Ending::Cold)));
+        assert!(
+            s.codex
+                .has(crate::codex::DiscoveryId::Note(NoteId::EndingCold)),
+            "EndingCold note must be fired"
+        );
+    }
+
+    /// After an ending, all actions are rejected (terminal state).
+    #[test]
+    fn terminal_state_rejects_all_actions_after_ending() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = watched_arrived_state(&w);
+        s.apply(&w, Action::ChooseEnding(Ending::Cold)).unwrap();
+        assert_eq!(s.endgame, Some(Endgame::Ended(Ending::Cold)));
+        // Jump (and any non-ChooseEnding action) is blocked.
+        assert_eq!(
+            s.apply(&w, Action::Jump(crate::galaxy::SystemId(1))),
+            Err(Rejected("the watched is waiting")),
+        );
+        // ChooseEnding also fails because WatchedArrived is gone.
+        assert_eq!(
+            s.apply(&w, Action::ChooseEnding(Ending::Ascendant)),
+            Err(Rejected("the watched is not here")),
+        );
+    }
+
+    /// advance after Ended leaves the endgame unchanged.
+    #[test]
+    fn advance_after_ending_leaves_endgame_unchanged() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = watched_arrived_state(&w);
+        s.apply(&w, Action::ChooseEnding(Ending::Cold)).unwrap();
+        assert_eq!(s.endgame, Some(Endgame::Ended(Ending::Cold)));
+        s.advance(&w, 10);
+        assert_eq!(
+            s.endgame,
+            Some(Endgame::Ended(Ending::Cold)),
+            "endgame must be unchanged after advance"
+        );
+    }
+
+    /// ChooseEnding without WatchedArrived is rejected.
+    #[test]
+    fn choose_ending_rejected_when_watched_not_here() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        assert!(s.endgame.is_none());
+        assert_eq!(
+            s.apply(&w, Action::ChooseEnding(Ending::Cold)),
+            Err(Rejected("the watched is not here")),
+        );
+    }
+
+    /// Drifter and Seed get different note bodies for the same ending.
+    #[test]
+    fn different_origins_get_different_ending_text() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+
+        let mut drifter = watched_arrived_state(&w);
+        // drifter origin is already Drifter (default_origin_def)
+        drifter
+            .apply(&w, Action::ChooseEnding(Ending::Cold))
+            .unwrap();
+
+        let mut seed = watched_arrived_state(&w);
+        seed.origin.id = crate::origin::Origin::Seed;
+        seed.apply(&w, Action::ChooseEnding(Ending::Cold)).unwrap();
+
+        let drifter_entry = drifter
+            .codex
+            .entries
+            .iter()
+            .find(|d| d.id == crate::codex::DiscoveryId::Note(NoteId::EndingCold))
+            .expect("drifter must have EndingCold note");
+        let seed_entry = seed
+            .codex
+            .entries
+            .iter()
+            .find(|d| d.id == crate::codex::DiscoveryId::Note(NoteId::EndingCold))
+            .expect("seed must have EndingCold note");
+
+        assert_ne!(
+            drifter_entry.text, seed_entry.text,
+            "Drifter and Seed must have different ending text"
         );
     }
 }
