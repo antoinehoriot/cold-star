@@ -164,14 +164,14 @@ body {
 .console-root {
   max-width: 660px;
   margin: 0 auto;
-  padding: 1.5rem 1.5rem 3rem;
+  padding: 0 1.5rem 3rem;
 }
 
 /* ---- App shell */
 .console {
   max-width: 660px;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 0;
 }
 
 /* ---- Title / Brand */
@@ -182,27 +182,94 @@ body {
   font-size: 13px;
   color: var(--accent);
   text-transform: uppercase;
-  margin: 0 0 1.5rem;
+  margin: 0;
+  padding: 1rem 1.5rem;
   opacity: .85;
 }
 
-/* ---- Reactor readout */
-.readout {
+/* ---- Loading placeholder */
+.loading-placeholder {
+  padding: 1.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
   font-size: .72rem;
   letter-spacing: .25em;
   text-transform: uppercase;
-  color: var(--muted);
 }
-.charge {
+
+/* ---- Core rail — pinned heartbeat bar */
+.rail {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: linear-gradient(180deg, hsl(var(--warm) 28% 7%), hsl(var(--warm) 26% 6% / .92));
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.rail-in {
+  max-width: 660px;
+  margin: 0 auto;
+  padding: 12px 1.5rem 10px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 18px;
+  align-items: end;
+}
+.core-num {
   font-family: var(--display);
   font-weight: 300;
-  font-size: 2.8rem;
-  line-height: .9;
-  margin: .3rem 0 .2rem;
-  color: var(--text);
-  text-shadow: 0 0 calc(18px * var(--charge)) var(--accent-soft);
   font-variant-numeric: tabular-nums;
+  font-size: 56px;
+  line-height: .82;
+  color: var(--text);
+  letter-spacing: .01em;
+  text-shadow: 0 0 calc(18px * var(--charge)) var(--accent-soft);
 }
+.core-num b {
+  font-weight: 600;
+  color: var(--accent);
+}
+.core-cap {
+  font-size: 38px;
+  color: var(--muted);
+}
+.core-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 5px;
+  font-size: 11px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 calc(10px * var(--charge)) var(--accent);
+  align-self: center;
+  flex-shrink: 0;
+}
+.core-bar {
+  height: 4px;
+  background: #0a1016;
+  border-radius: 2px;
+  overflow: hidden;
+  grid-column: 1 / -1;
+  margin-top: 10px;
+}
+.core-bar > i {
+  display: block;
+  height: 100%;
+  width: calc(var(--charge) * 100%);
+  background: linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent), white 35%));
+  box-shadow: 0 0 12px var(--accent);
+  transition: width .5s ease;
+}
+
+/* ---- Status word (in rail, right column) */
 .status {
   font-family: var(--display);
   font-weight: 600;
@@ -210,7 +277,8 @@ body {
   text-transform: uppercase;
   font-size: 14px;
   color: var(--accent);
-  margin: .1rem 0 .6rem;
+  text-align: right;
+  align-self: center;
 }
 .status-Stable   { color: var(--good); }
 .status-Igniting { color: var(--accent); }
@@ -250,28 +318,42 @@ body {
 .act:disabled { opacity: .35; cursor: not-allowed; }
 .act.ghost { opacity: .6; }
 
-/* ---- Origin picker */
-.origins { display: flex; gap: 1rem; flex-wrap: wrap; }
+/* ---- Origin picker — Emberfall instrument plates */
+.origins-header {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: .68rem;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 1rem;
+}
+.origins { display: flex; gap: .9rem; flex-wrap: wrap; }
 .origin-card {
-  flex: 1 1 160px;
-  padding: 1rem;
+  flex: 1 1 175px;
+  padding: 1rem 1.1rem;
   border: 1px solid var(--line);
   border-radius: var(--r);
-  background: var(--fill);
+  background: linear-gradient(180deg, var(--fill), var(--fill-2));
+  box-shadow: 0 0 0 1px #0006 inset, 0 0 calc(26px * var(--charge)) -16px var(--accent);
   cursor: pointer;
-  transition: background .18s, border-color .18s;
+  transition: background .18s, border-color .18s, box-shadow .18s;
 }
-.origin-card:hover { background: #11202c; border-color: var(--accent); }
+.origin-card:hover {
+  background: linear-gradient(180deg, #11202c, #0d1820);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px #0006 inset, 0 0 18px -8px var(--accent);
+}
 .origin-name {
   font-family: var(--display);
   font-weight: 600;
   color: var(--accent);
-  letter-spacing: .12em;
-  margin-bottom: .5rem;
+  letter-spacing: .16em;
+  margin-bottom: .55rem;
   text-transform: uppercase;
-  font-size: 13px;
+  font-size: 15px;
 }
-.origin-intro { font-size: .82rem; color: #9fb3c2; line-height: 1.4; }
+.origin-intro { font-size: .82rem; color: #9fb3c2; line-height: 1.45; }
 
 /* ---- Log */
 .log {
@@ -576,7 +658,8 @@ body {
 /* ---- Responsive */
 @media (max-width: 680px) {
   .dash { grid-template-columns: 1fr; }
-  .charge { font-size: 2rem; }
+  .core-num { font-size: 40px; }
+  .core-cap { font-size: 28px; }
 }
 
 /* ---- Accessibility */
@@ -1449,23 +1532,25 @@ fn OriginSelect(
     origins: Signal<Vec<OriginDef>>,
 ) -> Element {
     rsx! {
-        div { class: "readout", "CHOOSE AN ORIGIN" }
-        div { class: "origins",
-            for o in origins.read().iter().cloned() {
-                div {
-                    class: "origin-card",
-                    onclick: move |_| {
-                        let t = tuning.read().clone();
-                        let j = JobRegistry(jobs.read().clone());
-                        let m = ModuleRegistry(modules.read().clone());
-                        let tc = TechRegistry(techs.read().clone());
-                        let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                        let seed = crate::persist::seed_from_clock();
-                        let gs = GameState::new_with_origin(&o, &world, seed);
-                        state.set(Some(gs));
-                    },
-                    div { class: "origin-name", "{o.name}" }
-                    div { class: "origin-intro", "{o.intro}" }
+        div { class: "console-root",
+            p { class: "origins-header", "Choose an origin" }
+            div { class: "origins",
+                for o in origins.read().iter().cloned() {
+                    div {
+                        class: "origin-card",
+                        onclick: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            let seed = crate::persist::seed_from_clock();
+                            let gs = GameState::new_with_origin(&o, &world, seed);
+                            state.set(Some(gs));
+                        },
+                        div { class: "origin-name", "{o.name}" }
+                        div { class: "origin-intro", "{o.intro}" }
+                    }
                 }
             }
         }
@@ -1482,7 +1567,12 @@ fn Console(
 ) -> Element {
     let snapshot = state.read();
     let Some(gs) = snapshot.as_ref() else {
-        return rsx! { div {} };
+        return rsx! {
+            div { class: "loading-placeholder",
+                "COLD STAR"
+                span { style: "display:block;margin-top:.5rem;width:40px;height:1px;background:var(--line);" }
+            }
+        };
     };
     let charge = gs.reactor.charge;
     let capacity = gs.reactor.capacity;
@@ -2115,13 +2205,26 @@ fn Console(
                 on_restart: move |_| { state.set(None); },
             }
         } else {
-        // Reactor readout — the heartbeat. ALWAYS visible (charge + status),
-        // independent of disclosure, so the core gauge never disappears.
-        div { class: "readout", "REACTOR CORE" }
-        div { class: "charge", "{charge:.0} / {capacity:.0}" }
-        div { class: "status status-{status}", "{status}" }
-        if shipyard_complete {
-            div { class: "readout", "SHIP \u{00b7} drive {ship_drive:.0} \u{00b7} cargo {ship_cargo_used:.0}/{ship_cargo_max:.0} \u{00b7} isotopes {isotopes:.0}" }
+        // Core rail — pinned heartbeat bar. ALWAYS visible (charge + status),
+        // independent of disclosure. NOT inside a filter: keeps position:sticky working.
+        div { class: "rail",
+            div { class: "rail-in",
+                div {
+                    div { class: "core-num",
+                        b { "{charge:.0}" }
+                        span { class: "core-cap", " / {capacity:.0}" }
+                    }
+                    div { class: "core-meta",
+                        span { class: "dot" }
+                        span { "Reactor core" }
+                        if shipyard_complete {
+                            span { "\u{00b7} ship \u{00b7} drive {ship_drive:.0} \u{00b7} cargo {ship_cargo_used:.0}/{ship_cargo_max:.0} \u{00b7} iso {isotopes:.0}" }
+                        }
+                    }
+                }
+                div { class: "status status-{status}", "{status}" }
+                div { class: "core-bar", i {} }
+            }
         }
 
         if let Some((secs, crit)) = atmo_warning {
