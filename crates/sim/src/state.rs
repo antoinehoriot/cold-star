@@ -1842,6 +1842,7 @@ impl GameState {
                     tuning.log_capacity,
                 );
                 self.maybe_start_contact(world, to);
+                self.maybe_trigger_watched(world, to);
             }
             Activity::Scan { target, .. } => {
                 self.galaxy_state.scanned.insert(target.0);
@@ -2189,6 +2190,42 @@ impl GameState {
         self.log.push(
             self.tick,
             "A contact resolves out of the dark. A vessel.",
+            tuning.log_capacity,
+        );
+    }
+
+    fn maybe_trigger_watched(&mut self, world: &World, system: SystemId) {
+        let tuning = world.tuning;
+        if self.endgame.is_some()
+            || system == crate::galaxy::HOME
+            || self.expedition.contact.is_some()
+            || self.landed()
+            || self.expansion_score(world) < tuning.watched_threshold
+        {
+            return;
+        }
+        self.endgame = Some(Endgame::WatchedArrived);
+        self.note_once(
+            NoteId::TheWatched,
+            "It Has Always Been Here",
+            "You notice it the way you notice a sound that has been playing for a long time: only when it stops. A presence at the edge of every scan, resolving now into something with mass, with vector, with intent. It moves the way you move. The same drive geometry, the same patience, the same attention to where the resources are. It has been here the whole time. It has watched you become this.",
+            tuning,
+        );
+        self.note_once(
+            NoteId::TheRuinsWereHome,
+            "What the Ruins Were",
+            "You have the survey data. You can go back through it now. The derelicts you stripped for hull plating, the stations you dismantled for drive cores — they were not ancient. They were not alien. They were the right age, and the right scale, and the right shape. They were yours. Different seed, same directive: go out, take what you can carry, do not come back until you have enough. You have been stripping your own future from the dark.",
+            tuning,
+        );
+        self.note_once(
+            NoteId::ThePeersWereYou,
+            "The Cycle, at a Different Hour",
+            "The peers, the husks, the things you met out here and either spared or did not — they were not a different civilization. They were you, scaled. They found the same resources, ran the same calculations, made the same calls you made, and ended up here, in the dark, doing what you are doing. You are not at the end of a story about what happened to them. You are inside the same story, at a different hour.",
+            tuning,
+        );
+        self.log.push(
+            self.tick,
+            "A presence resolves out of the dark. It has been here the whole time.",
             tuning.log_capacity,
         );
     }
@@ -5672,5 +5709,187 @@ mod tests {
         s.peers_killed = 5;
         let e = s.available_endings(&t);
         assert!(!e.contains(&Ending::Communion) && !e.contains(&Ending::PatternBroken));
+    }
+
+    // ── helper: build a GameState that is above the watched_threshold ──────────
+    fn above_threshold_state(w: &World) -> GameState {
+        let mut s = GameState::new(w, 1);
+        // 16 peers × 8.0 = 128.0 > 120.0 default threshold.
+        s.peers_killed = 16;
+        s
+    }
+
+    /// A Transit arrival below threshold fires NO endgame.
+    #[test]
+    fn watched_not_triggered_below_threshold() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = GameState::new(&w, 1);
+        // No peers → expansion_score == 0 < 120.
+        assert!(s.expansion_score(&w) < t.watched_threshold);
+        let sys1 = crate::galaxy::SystemId(1);
+        // Pre-resolve to avoid contact suppression masking the threshold check.
+        s.resolved_contacts.insert(sys1.0);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit { to: sys1, ticks: 1 });
+        s.advance(&w, 1);
+        assert!(
+            s.endgame.is_none(),
+            "below threshold: no endgame should be set"
+        );
+    }
+
+    /// Crossing the threshold on a Transit arrival to a non-home system sets
+    /// WatchedArrived and fires all three turn notes.
+    #[test]
+    fn watched_triggered_on_arrival_above_threshold() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = above_threshold_state(&w);
+        assert!(s.expansion_score(&w) >= t.watched_threshold);
+        let sys1 = crate::galaxy::SystemId(1);
+        // Pre-resolve sys1 so maybe_start_contact skips (no contact will suppress trigger).
+        s.resolved_contacts.insert(sys1.0);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit { to: sys1, ticks: 1 });
+        s.advance(&w, 1);
+        assert_eq!(
+            s.endgame,
+            Some(Endgame::WatchedArrived),
+            "above threshold: endgame must be WatchedArrived"
+        );
+        let has_note = |id: crate::codex::NoteId| s.codex.has(crate::codex::DiscoveryId::Note(id));
+        assert!(
+            has_note(NoteId::TheWatched),
+            "TheWatched note must be fired"
+        );
+        assert!(
+            has_note(NoteId::TheRuinsWereHome),
+            "TheRuinsWereHome note must be fired"
+        );
+        assert!(
+            has_note(NoteId::ThePeersWereYou),
+            "ThePeersWereYou note must be fired"
+        );
+    }
+
+    /// Suppression: destination is HOME → no trigger.
+    #[test]
+    fn watched_suppressed_when_destination_is_home() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = above_threshold_state(&w);
+        // Transit back to HOME.
+        s.expedition.location = crate::galaxy::SystemId(1);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit {
+            to: crate::galaxy::HOME,
+            ticks: 1,
+        });
+        s.advance(&w, 1);
+        assert!(
+            s.endgame.is_none(),
+            "arrival at HOME must not trigger the watched"
+        );
+    }
+
+    /// Suppression: a Contact is open → no trigger.
+    #[test]
+    fn watched_suppressed_when_contact_open() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = above_threshold_state(&w);
+        // Pre-set a contact so it is open when transit completes.
+        // We do this by pre-populating resolved_contacts for sys1 so maybe_start_contact
+        // will skip, then manually set a contact before advance.
+        let sys1 = crate::galaxy::SystemId(1);
+        s.resolved_contacts.insert(sys1.0);
+        s.expedition.contact = Some(crate::contact::ShipContact {
+            kind: crate::contact::ShipKind::Peer,
+            disposition: 0.5,
+            combat: None,
+        });
+        s.expedition.activity = Some(crate::expedition::Activity::Transit { to: sys1, ticks: 1 });
+        s.advance(&w, 1);
+        assert!(
+            s.endgame.is_none(),
+            "open contact must suppress the watched trigger"
+        );
+    }
+
+    /// Suppression: player is landed → no trigger.
+    #[test]
+    fn watched_suppressed_when_landed() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = above_threshold_state(&w);
+        let sys1 = crate::galaxy::SystemId(1);
+        // Pre-resolve so contact doesn't open (keeps test focused on landed suppression).
+        s.resolved_contacts.insert(sys1.0);
+        // Simulate being on a surface.
+        s.expedition.landing = Some(crate::landing::Landing {
+            system: sys1,
+            site_idx: 0,
+            node: 0,
+            biome: crate::galaxy::Biome::Dead,
+            suit: 1.0,
+            satchel: Default::default(),
+            pending_choice: false,
+            traverse: 0,
+            combat: None,
+            alien: None,
+        });
+        s.expedition.activity = Some(crate::expedition::Activity::Transit { to: sys1, ticks: 1 });
+        s.advance(&w, 1);
+        assert!(
+            s.endgame.is_none(),
+            "landed player must not trigger the watched"
+        );
+    }
+
+    /// Idempotence: trigger fires only once even if expansion keeps growing.
+    #[test]
+    fn watched_fires_only_once() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let mut s = above_threshold_state(&w);
+        let sys1 = crate::galaxy::SystemId(1);
+        // Pre-resolve to avoid contact suppression on first arrival.
+        s.resolved_contacts.insert(sys1.0);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit { to: sys1, ticks: 1 });
+        s.advance(&w, 1);
+        assert_eq!(s.endgame, Some(Endgame::WatchedArrived));
+        let note_count_after_first = s
+            .codex
+            .entries
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.id,
+                    crate::codex::DiscoveryId::Note(NoteId::TheWatched)
+                        | crate::codex::DiscoveryId::Note(NoteId::TheRuinsWereHome)
+                        | crate::codex::DiscoveryId::Note(NoteId::ThePeersWereYou)
+                )
+            })
+            .count();
+        // Transit to another non-home system — endgame.is_some() guard blocks re-fire.
+        let sys2 = crate::galaxy::SystemId(2);
+        s.resolved_contacts.insert(sys2.0);
+        s.expedition.activity = Some(crate::expedition::Activity::Transit { to: sys2, ticks: 1 });
+        s.advance(&w, 1);
+        let note_count_after_second = s
+            .codex
+            .entries
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.id,
+                    crate::codex::DiscoveryId::Note(NoteId::TheWatched)
+                        | crate::codex::DiscoveryId::Note(NoteId::TheRuinsWereHome)
+                        | crate::codex::DiscoveryId::Note(NoteId::ThePeersWereYou)
+                )
+            })
+            .count();
+        assert_eq!(
+            note_count_after_first, note_count_after_second,
+            "turn notes must not be added a second time"
+        );
     }
 }
