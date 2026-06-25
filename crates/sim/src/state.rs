@@ -5492,4 +5492,107 @@ mod tests {
             "hull must not regen while a contact is active, even at HOME"
         );
     }
+
+    // ── CB3 Task 10: determinism + re-entry tests ─────────────────────────────
+
+    /// Ship-combat determinism: advance(20) == 20 × advance(1) with an active
+    /// Peer ship fight injected at tick 0.  Hull drains each tick; the fight
+    /// resolves inside the window, exercising both combat ticks and the win path.
+    #[test]
+    fn advance_n_equals_n_times_advance_1_during_ship_combat() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+        let setup = |s: &mut GameState| {
+            s.ship.built = true;
+            // Place ship in a non-home system so the expedition is "away".
+            s.expedition.location = crate::galaxy::SystemId(5);
+            // Inject an active Peer ship fight.  At tier-0, player atk=15 vs
+            // peer def=4 → 11 damage/tick; peer hp=90 → resolves in ~9 ticks.
+            let combat = crate::contact::peer_ship_stats(0, 1.0, &s.ship, &t);
+            // High enough HP that the fight lasts multiple ticks (default 90.0 is fine).
+            s.expedition.contact = Some(crate::contact::ShipContact {
+                kind: crate::contact::ShipKind::Peer,
+                disposition: 0.0,
+                combat: Some(combat),
+            });
+        };
+        let mut bulk = GameState::new(&w, 1);
+        setup(&mut bulk);
+        let mut step = GameState::new(&w, 1);
+        setup(&mut step);
+
+        // Sanity: combat must be active at tick 0 for this test to be meaningful.
+        assert!(
+            bulk.expedition.contact.as_ref().unwrap().combat.is_some(),
+            "ship combat must be active at tick 0 for this test to be meaningful"
+        );
+
+        bulk.advance(&w, 20);
+        for _ in 0..20 {
+            step.advance(&w, 1);
+        }
+        assert_eq!(
+            bulk, step,
+            "bulk advance and stepped advance must be identical"
+        );
+    }
+
+    /// Contact-roll determinism and re-entry skip:
+    /// 1. `roll_contact` returns the same result on two calls with the same args.
+    /// 2. A system in `resolved_contacts` is skipped by `maybe_start_contact`.
+    /// 3. A non-resolved system whose roll is `Some` DOES surface a contact.
+    #[test]
+    fn ship_contact_roll_is_deterministic_and_resolved_skips() {
+        let (t, j, m, tc) = (Tuning::default(), jobs(), modules(), techs());
+        let w = world(&t, &j, &m, &tc);
+
+        // ── 1. roll_contact is pure (same result on two calls) ─────────────────
+        let sys4 = crate::galaxy::SystemId(4);
+        let first = crate::contact::roll_contact(42, sys4, &t);
+        let second = crate::contact::roll_contact(42, sys4, &t);
+        assert_eq!(
+            first, second,
+            "roll_contact must return the same result on repeated calls"
+        );
+        // Pinned: seed=42, system=4 → Some(Peer) (verified by existing T4 tests).
+        assert_eq!(
+            first,
+            Some(crate::contact::ShipKind::Peer),
+            "pinned seed: roll_contact(42, 4) must be Some(Peer)"
+        );
+
+        // ── 2. Resolved system skips contact on re-arrival ─────────────────────
+        {
+            let mut s = GameState::new(&w, 42);
+            s.ship.built = true;
+            // Mark system 4 as already resolved.
+            s.resolved_contacts.insert(4);
+            s.expedition.activity =
+                Some(crate::expedition::Activity::Transit { to: sys4, ticks: 1 });
+            s.advance(&w, 1);
+            assert!(
+                s.expedition.contact.is_none(),
+                "resolved system must not surface a contact on re-arrival"
+            );
+            assert_eq!(s.expedition.location, sys4);
+        }
+
+        // ── 3. Non-resolved system with a hot roll DOES surface a contact ──────
+        {
+            let mut s = GameState::new(&w, 42);
+            s.ship.built = true;
+            // System 4 is NOT in resolved_contacts.
+            assert!(
+                !s.resolved_contacts.contains(&4),
+                "system 4 must start unresolved"
+            );
+            s.expedition.activity =
+                Some(crate::expedition::Activity::Transit { to: sys4, ticks: 1 });
+            s.advance(&w, 1);
+            assert!(
+                s.expedition.contact.is_some(),
+                "non-resolved system with a hot roll must surface a contact"
+            );
+        }
+    }
 }

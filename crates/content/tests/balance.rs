@@ -875,3 +875,232 @@ fn cb2_fauna_observe_or_harvest() {
         );
     }
 }
+
+/// CB3 — a Peer ship contact (in negotiation mode) can be:
+///   (a) passed peacefully via HailGift → HailParley (peers_spared == 1, block lifted);
+///   (b) won in combat via AttackShip → advance (peers_killed == 1, salvage in cargo);
+///   (c) escaped via emergency retreat (low hull → hull == floor, still playable).
+///
+/// Balance note: The win path uses expedition.location = HOME (gradient = 1.0) to
+/// guarantee deterministic enemy stats. At grad=1.0, depth=0, tier-0:
+///   peer_hp=90, peer_atk=11, peer_def=4.
+///   player_atk=15 (aggressive), player_def=3.
+///   Player damage = 11/tick → kills in ~9 ticks.
+///   Enemy damage = 8/tick → player takes ~72 hull; survives (hull=120). No upgrades needed.
+///
+/// (The same fight at a far-away system can trigger retreat due to grad > 1 scaling all
+/// peer stats, which is a valid balance property — not a bug. Using HOME pins grad=1.0.)
+#[test]
+fn cb3_ship_contact_pass_fight_or_retreat() {
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+
+    // ── Shared base setup ─────────────────────────────────────────────────────
+    // Returns a GameState with ship built, MunitionsKnown + XenoContactKnown.
+    // We inject the ShipContact directly (negotiation mode, no combat).
+    let base_setup = |location: SystemId, prev_location: SystemId| {
+        let mut s = GameState::new(&w, 6);
+        s.flags.insert(Flag::MunitionsKnown);
+        s.flags.insert(Flag::XenoContactKnown);
+        s.ship.built = true;
+        s.expedition.location = location;
+        s.expedition.prev_location = prev_location;
+        // Inject a Peer contact in negotiation mode (no combat) at neutral disposition.
+        s.expedition.contact = Some(sim::contact::ShipContact {
+            kind: sim::contact::ShipKind::Peer,
+            disposition: 0.0,
+            combat: None,
+        });
+        s
+    };
+
+    let home = sim::galaxy::HOME;
+
+    // ── (a) PEACEFUL PASS: HailGift → HailParley ──────────────────────────────
+    // Use HOME as the encounter location (contact injected directly, not via arrival).
+    {
+        let mut s = base_setup(home, home);
+        let system = s.expedition.location;
+
+        // ScanSystem must be blocked while the contact is open.
+        let scan_target = SystemId(6);
+        // Reveal system 6 so the scan isn't rejected for "not on the map" first.
+        s.galaxy_state.revealed.insert(6);
+        let err = s.apply(&w, Action::ScanSystem(scan_target)).unwrap_err();
+        assert!(
+            err.0.contains("resolve the contact"),
+            "ScanSystem must be contact-blocked (got: {})",
+            err.0
+        );
+
+        // Provision Components for the gift (gift_cost = 10.0).
+        s.expedition.cargo.insert(ResourceKind::Components, 100.0);
+
+        // HailGift: disposition 0.0 + 35.0 = 35.0 (≥ disp_curious = 30.0).
+        s.apply(&w, Action::HailGift)
+            .expect("HailGift must succeed");
+        let disp_after_gift = s.expedition.contact.as_ref().unwrap().disposition;
+        assert!(
+            disp_after_gift >= t.disp_curious,
+            "disposition must reach Curious after HailGift (got {disp_after_gift})"
+        );
+
+        // HailParley: 35.0 + 18.0 = 53.0 ≥ peace_band (30.0) → resolve.
+        s.apply(&w, Action::HailParley)
+            .expect("HailParley must succeed");
+        assert_eq!(
+            s.peers_spared, 1,
+            "peers_spared must be 1 after peaceful resolution"
+        );
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact must be cleared after Parley"
+        );
+        assert!(
+            s.resolved_contacts.contains(&system.0),
+            "system must be in resolved_contacts after peaceful resolution"
+        );
+
+        // Contact block lifted: ScanSystem now fails for a different reason
+        // (no sensor array, not "resolve the contact") — proves the block is gone.
+        let err2 = s.apply(&w, Action::ScanSystem(scan_target)).unwrap_err();
+        assert!(
+            !err2.0.contains("resolve the contact"),
+            "contact block must be lifted after resolution (got: {})",
+            err2.0
+        );
+    }
+
+    // ── (b) WIN THE FIGHT: AttackShip → advance ───────────────────────────────
+    // Use HOME (gradient=1.0) so peer stats are deterministic and the fight is
+    // winnable at tier-0 without upgrades.
+    {
+        let mut s = base_setup(home, home);
+        s.ship.hull = t.ship_base_hull; // full hull
+
+        // AttackShip opens combat using peer_ship_stats(depth=0, grad, ship, t).
+        s.apply(&w, Action::AttackShip)
+            .expect("AttackShip must succeed");
+        assert!(
+            s.expedition.contact.as_ref().unwrap().combat.is_some(),
+            "combat must be open after AttackShip"
+        );
+
+        // Advance tick-by-tick until combat resolves (cap at 200 ticks).
+        for _ in 0..200 {
+            if s.expedition
+                .contact
+                .as_ref()
+                .map(|c| c.combat.is_none())
+                .unwrap_or(true)
+            {
+                break;
+            }
+            s.advance(&w, 1);
+        }
+
+        // Win must have occurred: contact gone, peers_killed == 1.
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact must be cleared after winning ship combat"
+        );
+        assert_eq!(
+            s.peers_killed, 1,
+            "peers_killed must be 1 after defeating a Peer ship"
+        );
+
+        // Salvage must be in expedition cargo.
+        let comp = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Components)
+            .copied()
+            .unwrap_or(0.0);
+        let iso = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Isotopes)
+            .copied()
+            .unwrap_or(0.0);
+        let data = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Data)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            comp > 0.0 || iso > 0.0 || data > 0.0,
+            "salvage must be in expedition cargo after win (comp={comp} iso={iso} data={data})"
+        );
+    }
+
+    // ── (c) SOFT RETREAT: low hull → emergency retreat fires ─────────────────
+    // Use SystemId(1) as the away system, prev_location = SystemId(2).
+    // A non-HOME prev avoids hull_regen firing on the retreat tick, keeping
+    // the hull == hull_retreat_floor assertion exact.
+    // Hull = 0.01: any positive combat damage → hull ≤ 0 → retreat after 1 tick.
+    {
+        let away = SystemId(1);
+        let prev = SystemId(2);
+        let mut s = base_setup(away, prev);
+        let away_system = s.expedition.location;
+        let prev_system = s.expedition.prev_location;
+        // Set hull near zero so the first combat tick drives it to ≤ 0.
+        s.ship.hull = 0.01;
+        // Put some cargo in so we can measure the loss.
+        s.expedition.cargo.insert(ResourceKind::Isotopes, 100.0);
+
+        // AttackShip opens combat.
+        s.apply(&w, Action::AttackShip)
+            .expect("AttackShip must succeed with low hull");
+
+        // One tick: enemy atk (≥11) − player def (3) → ≥8 damage; hull ≤ 0 → retreat.
+        s.advance(&w, 1);
+
+        assert_eq!(
+            s.expedition.location, prev_system,
+            "ship must retreat to prev_location (got {:?})",
+            s.expedition.location
+        );
+        assert!(
+            s.expedition.contact.is_none(),
+            "contact must be cleared after emergency retreat"
+        );
+        assert!(
+            (s.ship.hull - t.hull_retreat_floor).abs() < 1e-9,
+            "hull must be clamped to hull_retreat_floor after retreat (got {}, want {})",
+            s.ship.hull,
+            t.hull_retreat_floor
+        );
+        // Cargo reduced by retreat_cargo_loss.
+        let isotopes = s
+            .expedition
+            .cargo
+            .get(&ResourceKind::Isotopes)
+            .copied()
+            .unwrap_or(0.0);
+        let expected_iso = 100.0 * (1.0 - t.retreat_cargo_loss);
+        assert!(
+            (isotopes - expected_iso).abs() < 1e-6,
+            "cargo reduced by retreat_cargo_loss (got {isotopes}, want {expected_iso})"
+        );
+        // FirstShipCrippled note must be fired.
+        assert!(
+            s.codex
+                .has(sim::codex::DiscoveryId::Note(NoteId::FirstShipCrippled)),
+            "FirstShipCrippled note must be fired on retreat"
+        );
+        // System must NOT be in resolved_contacts (a loss doesn't resolve it).
+        assert!(
+            !s.resolved_contacts.contains(&away_system.0),
+            "retreat must NOT add system to resolved_contacts"
+        );
+        // Game still playable: advance a few ticks without panic.
+        s.advance(&w, 5);
+    }
+}
