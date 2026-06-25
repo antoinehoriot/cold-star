@@ -626,6 +626,13 @@ fn SurfaceView(
     on_use_consumable: EventHandler<sim::gear::ConsumableKind>,
     on_stance: EventHandler<()>,
     on_flee: EventHandler<()>,
+    on_parley: EventHandler<()>,
+    on_trade: EventHandler<()>,
+    on_gift: EventHandler<()>,
+    on_avoid: EventHandler<()>,
+    on_observe: EventHandler<()>,
+    on_harvest_fauna: EventHandler<()>,
+    on_attack_alien: EventHandler<()>,
 ) -> Element {
     let suit_pct = (vm.suit / vm.suit_max * 100.0).clamp(0.0, 100.0);
     let busy = vm.traverse > 0;
@@ -691,6 +698,12 @@ fn SurfaceView(
         0.0
     };
 
+    let disp_pct = vm
+        .negotiation
+        .as_ref()
+        .map(|neg| ((neg.disposition + 100.0) / 2.0).clamp(0.0, 100.0))
+        .unwrap_or(0.0);
+
     rsx! {
         div { class: "panel surface",
             div { class: "panel-title", "SURFACE \u{00b7} {vm.biome}" }
@@ -723,6 +736,29 @@ fn SurfaceView(
                             }
                         }
                         button { class: "act", onclick: move |_| on_flee.call(()), "Flee" }
+                    }
+                }
+            } else if let Some(neg) = vm.negotiation.clone() {
+                div { class: "neg",
+                    div { class: "panel-title", "CONTACT \u{2014} {neg.kind}" }
+                    div { class: "neg-band band-{neg.band}", "Disposition: {neg.band} ({neg.disposition:.0})" }
+                    div { class: "bar bar-disp", span { style: "width: {disp_pct}%" } }
+                    div { class: "muted",
+                        if neg.is_peer { "It moves the way you move. It is deciding about you, too." }
+                        else { "Native life. Wary, watching." }
+                    }
+                    div { class: "neg-actions",
+                        button { class: "mini", disabled: !neg.can_parley, onclick: move |_| on_parley.call(()), "Parley" }
+                        if neg.is_peer {
+                            button { class: "mini", disabled: !neg.can_trade, onclick: move |_| on_trade.call(()), "Trade" }
+                        }
+                        button { class: "mini", disabled: !neg.can_gift, onclick: move |_| on_gift.call(()), "Gift" }
+                        if !neg.is_peer {
+                            button { class: "mini", disabled: !neg.can_observe, onclick: move |_| on_observe.call(()), "Observe" }
+                            button { class: "mini", disabled: !neg.can_harvest, onclick: move |_| on_harvest_fauna.call(()), "Harvest" }
+                        }
+                        button { class: "act", onclick: move |_| on_avoid.call(()), "Avoid" }
+                        button { class: "act", onclick: move |_| on_attack_alien.call(()), "Attack" }
                     }
                 }
             } else if vm.pending_choice {
@@ -1483,6 +1519,62 @@ fn Console(
                             let tc = TechRegistry(techs.read().clone());
                             let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
                             if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Flee); }
+                        },
+                        on_parley: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Parley); }
+                        },
+                        on_trade: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Trade); }
+                        },
+                        on_gift: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Gift); }
+                        },
+                        on_avoid: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Avoid); }
+                        },
+                        on_observe: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Observe); }
+                        },
+                        on_harvest_fauna: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Harvest); }
+                        },
+                        on_attack_alien: move |_| {
+                            let t = tuning.read().clone();
+                            let j = JobRegistry(jobs.read().clone());
+                            let m = ModuleRegistry(modules.read().clone());
+                            let tc = TechRegistry(techs.read().clone());
+                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
+                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::AttackAlien); }
                         },
                     }
                 } else {
