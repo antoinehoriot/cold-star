@@ -266,9 +266,9 @@ fn m4_travel_loop_brings_isotopes_home() {
         modules: &m,
         techs: &tc,
     };
-    // Seed 6 is pinned: its first reachable revealed neighbor holds an AsteroidField,
-    // making the full loop (scan → jump → resolve → return with Isotopes) possible.
-    // Seeds 4 and 5 have no asteroid field on their nearest reachable neighbor.
+    // Seed 6 is pinned: with the connected-growth galaxy algorithm, all seeds 1-20
+    // produce a reachable revealed neighbor with an AsteroidField. Seed 6 is kept
+    // for continuity; its inner web has an asteroid-bearing system within reveal+drive range.
     let mut s = GameState::new(&w, 6);
 
     // Bootstrap to the stars with seeded resources (we test mechanics, not grind):

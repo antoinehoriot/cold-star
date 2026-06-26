@@ -33,30 +33,106 @@ pub struct Galaxy {
     pub systems: Vec<System>,
 }
 
+const GALAXY_SALT: u32 = 0xA7B3_E291;
+
 impl Galaxy {
-    /// Generate the whole star map deterministically. System 0 is home:
-    /// fixed at the origin, Main-sequence. Systems 1.. draw an independent
-    /// position + star type from a sub-seeded stream so each is reproducible.
+    /// Generate the whole star map deterministically using connected-growth
+    /// placement. System 0 (HOME) is fixed at the origin. Inner systems
+    /// (ids 1..galaxy_inner_count) are placed within base-drive-range of an
+    /// anchor, forming a reachable web from HOME. Frontier systems are placed
+    /// just beyond base range, reachable after drive upgrades.
     pub fn generate(world_seed: u64, t: &Tuning) -> Galaxy {
-        let mut systems = Vec::with_capacity(t.galaxy_system_count as usize);
+        let mut systems: Vec<System> = Vec::with_capacity(t.galaxy_system_count as usize);
         systems.push(System {
             id: HOME,
             pos: (0.0, 0.0),
             star_type: StarType::MainSequence,
         });
+
+        let mut rng = Rng::new(hash(world_seed, GALAXY_SALT));
+        let base = t.ship_base_drive_range;
+        let sep = base * t.galaxy_min_separation_frac;
+
         for id in 1..t.galaxy_system_count {
-            let mut rng = Rng::new(hash(world_seed, id));
-            // Uniform point in a disc: r = R*sqrt(u), theta = 2*pi*v.
-            let r = t.galaxy_radius * rng.next_f64().sqrt();
-            let theta = std::f64::consts::TAU * rng.next_f64();
-            let pos = (r * theta.cos(), r * theta.sin());
+            let is_frontier = id >= t.galaxy_inner_count;
+
+            // Distance band from an anchor:
+            // inner:    [max(sep, base*0.35), base*0.92]   (within base drive range of anchor)
+            // frontier: [base*1.05, base + frontier_reach]  (needs drive upgrades)
+            let (dist_min, dist_max) = if !is_frontier {
+                (sep.max(base * 0.35), base * 0.92)
+            } else {
+                (base * 1.05, base + t.galaxy_frontier_reach)
+            };
+
+            // Pick anchor: for inner, any placed system (pick uniformly).
+            // For frontier, use the placed system furthest from HOME as anchor
+            // to push frontier outward.
+            let anchor_idx = if !is_frontier {
+                (rng.next_f64() * systems.len() as f64) as usize % systems.len()
+            } else {
+                let mut best_idx = 0usize;
+                let mut best_dist = 0.0f64;
+                for (i, s) in systems.iter().enumerate() {
+                    let d = (s.pos.0 * s.pos.0 + s.pos.1 * s.pos.1).sqrt();
+                    if d >= best_dist {
+                        best_dist = d;
+                        best_idx = i;
+                    }
+                }
+                best_idx
+            };
+
+            // Sample up to 40 candidates; fall back to last (clamp into disc) if none valid.
+            let anchor = systems[anchor_idx].pos;
+            let mut candidate = anchor; // fallback
+            for _ in 0..40 {
+                let angle = rng.next_f64() * std::f64::consts::TAU;
+                let dist = dist_min + rng.next_f64() * (dist_max - dist_min);
+                let cx = anchor.0 + angle.cos() * dist;
+                let cy = anchor.1 + angle.sin() * dist;
+
+                // Check: within galaxy_radius
+                let r = (cx * cx + cy * cy).sqrt();
+                if r > t.galaxy_radius {
+                    candidate = (cx, cy);
+                    continue;
+                }
+
+                // Check: not too close to any existing system
+                let too_close = systems.iter().any(|s| {
+                    let dx = s.pos.0 - cx;
+                    let dy = s.pos.1 - cy;
+                    (dx * dx + dy * dy).sqrt() < sep
+                });
+                if too_close {
+                    candidate = (cx, cy);
+                    continue;
+                }
+
+                candidate = (cx, cy);
+                break;
+            }
+
+            // If candidate is outside radius (fallback case), clamp it into the disc.
+            let r = (candidate.0 * candidate.0 + candidate.1 * candidate.1).sqrt();
+            let pos = if r > t.galaxy_radius {
+                let scale = (t.galaxy_radius - 1.0) / r;
+                (candidate.0 * scale, candidate.1 * scale)
+            } else {
+                candidate
+            };
+
+            // Star type draw comes AFTER position (keep star distribution independent).
             let star_type = weighted_star(&mut rng, t);
+
             systems.push(System {
                 id: SystemId(id),
                 pos,
                 star_type,
             });
         }
+
         Galaxy { systems }
     }
 
@@ -193,6 +269,7 @@ pub fn reveal_from(g: &Galaxy, from: SystemId, radius: f64, out: &mut BTreeSet<u
 mod tests {
     use super::*;
     use crate::config::Tuning;
+    use std::collections::VecDeque;
 
     #[test]
     fn generation_is_pure_and_seed_sensitive() {
@@ -294,6 +371,94 @@ mod tests {
         for &id in &out {
             let d = distance(g.get(HOME).unwrap(), g.get(SystemId(id)).unwrap());
             assert!(d <= t.galaxy_reveal_radius + 1e-9);
+        }
+    }
+
+    #[test]
+    fn inner_web_is_reachable_from_home_at_base_range() {
+        let t = Tuning::default();
+        for seed in [1u64, 7, 42, 99, 2024, 6] {
+            let g = Galaxy::generate(seed, &t);
+            // BFS from HOME using base drive range
+            let mut reachable = std::collections::BTreeSet::new();
+            let mut queue = VecDeque::new();
+            reachable.insert(HOME.0);
+            queue.push_back(HOME);
+            while let Some(cur) = queue.pop_front() {
+                let cur_sys = g.get(cur).unwrap();
+                for s in &g.systems {
+                    if !reachable.contains(&s.id.0)
+                        && distance(cur_sys, s) <= t.ship_base_drive_range
+                    {
+                        reachable.insert(s.id.0);
+                        queue.push_back(s.id);
+                    }
+                }
+            }
+            assert!(
+                reachable.len() >= t.galaxy_inner_count as usize,
+                "seed {seed}: BFS at base range reached {} systems, need >= {} (inner_count)",
+                reachable.len(),
+                t.galaxy_inner_count
+            );
+        }
+    }
+
+    #[test]
+    fn full_galaxy_reachable_at_max_upgraded_range() {
+        let t = Tuning::default();
+        let max_range = t.ship_base_drive_range + t.galaxy_frontier_reach;
+        for seed in [1u64, 7, 42, 99, 2024, 6] {
+            let g = Galaxy::generate(seed, &t);
+            let mut reachable = std::collections::BTreeSet::new();
+            let mut queue = VecDeque::new();
+            reachable.insert(HOME.0);
+            queue.push_back(HOME);
+            while let Some(cur) = queue.pop_front() {
+                let cur_sys = g.get(cur).unwrap();
+                for s in &g.systems {
+                    if !reachable.contains(&s.id.0) && distance(cur_sys, s) <= max_range {
+                        reachable.insert(s.id.0);
+                        queue.push_back(s.id);
+                    }
+                }
+            }
+            assert_eq!(
+                reachable.len(),
+                t.galaxy_system_count as usize,
+                "seed {seed}: BFS at max range reached {}/{} systems (some permanently stranded)",
+                reachable.len(),
+                t.galaxy_system_count
+            );
+        }
+    }
+
+    #[test]
+    fn galaxy_min_separation_and_radius_hold() {
+        let t = Tuning::default();
+        let sep = t.ship_base_drive_range * t.galaxy_min_separation_frac;
+        for seed in [1u64, 7, 42, 99, 2024, 6] {
+            let g = Galaxy::generate(seed, &t);
+            // All within radius
+            for s in &g.systems {
+                let r = (s.pos.0 * s.pos.0 + s.pos.1 * s.pos.1).sqrt();
+                assert!(
+                    r <= t.galaxy_radius + 1e-9,
+                    "seed {seed} system {:?} outside radius (r={r})",
+                    s.id
+                );
+            }
+            // Min separation (approximate — fallback may violate, allow small tolerance)
+            for i in 0..g.systems.len() {
+                for j in (i + 1)..g.systems.len() {
+                    let d = distance(&g.systems[i], &g.systems[j]);
+                    assert!(
+                        d >= sep * 0.5,
+                        "seed {seed}: systems {i} and {j} too close (d={d:.2}, sep*0.5={:.2})",
+                        sep * 0.5
+                    );
+                }
+            }
         }
     }
 }

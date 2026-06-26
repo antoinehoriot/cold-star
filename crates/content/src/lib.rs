@@ -130,6 +130,8 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     for (name, v) in [
         ("galaxy_radius", t.galaxy_radius),
         ("galaxy_reveal_radius", t.galaxy_reveal_radius),
+        ("galaxy_min_separation_frac", t.galaxy_min_separation_frac),
+        ("galaxy_frontier_reach", t.galaxy_frontier_reach),
         ("star_weight_dwarf", t.star_weight_dwarf),
         ("star_weight_mainseq", t.star_weight_mainseq),
         ("star_weight_neutron", t.star_weight_neutron),
@@ -158,6 +160,11 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     if t.galaxy_system_count < 2 {
         return Err(ContentError::Invalid(
             "galaxy_system_count must be >= 2".into(),
+        ));
+    }
+    if t.galaxy_inner_count < 2 || t.galaxy_inner_count > t.galaxy_system_count {
+        return Err(ContentError::Invalid(
+            "galaxy_inner_count must be in [2, galaxy_system_count]".into(),
         ));
     }
     if t.ship_base_drive_range <= 0.0 || t.ship_cargo <= 0.0 {
@@ -828,9 +835,12 @@ mod tests {
     #[test]
     fn loads_m4_tuning() {
         let t = load().unwrap();
-        assert_eq!(t.galaxy_system_count, 10);
+        assert_eq!(t.galaxy_system_count, 16);
+        assert_eq!(t.galaxy_inner_count, 11);
         assert_eq!(t.galaxy_radius, 100.0);
         assert_eq!(t.galaxy_reveal_radius, 45.0);
+        assert_eq!(t.galaxy_min_separation_frac, 0.4);
+        assert_eq!(t.galaxy_frontier_reach, 25.0);
         assert_eq!(t.ship_base_drive_range, 40.0);
         assert_eq!(t.ship_cargo, 60.0);
         assert_eq!(t.jump_base_cost, 5.0);
