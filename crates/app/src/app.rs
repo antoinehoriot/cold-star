@@ -119,6 +119,8 @@ struct ShipMunitionsVM {
     can_craft_drone: bool,
 }
 
+const REPO_URL: &str = "https://github.com/antoinehoriot/cold-star";
+
 const CSS: &str = "
 @import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@300;500;600;700&family=IBM+Plex+Mono:wght@300;400;500&display=swap');
 
@@ -826,6 +828,95 @@ body {
   .core-num { font-size: 40px; }
   .core-cap { font-size: 28px; }
 }
+
+/* ---- Site footer */
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 28px auto 6px;
+  padding: 14px 1.5rem 24px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 12px;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.foot-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color .2s ease;
+}
+.foot-link:hover { color: var(--accent); }
+.foot-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.foot-sep { color: var(--line); }
+
+/* ---- Legal overlay */
+.legal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 11, .72);
+  backdrop-filter: blur(2px);
+}
+.legal-card {
+  position: relative;
+  max-width: 560px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 30px 32px;
+  background: linear-gradient(180deg, hsl(var(--warm) 28% 8%), hsl(var(--warm) 26% 6%));
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+}
+.legal-title {
+  margin: 0 0 14px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 600;
+  font-size: 24px;
+  letter-spacing: .03em;
+  color: var(--accent);
+}
+.legal-card p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.legal-card p:last-child { margin-bottom: 0; }
+.legal-card .legal-mut { color: var(--muted); font-size: 13px; }
+.legal-card a.foot-link { color: var(--accent); text-decoration: underline; }
+.legal-card a.foot-link:hover { color: color-mix(in oklab, var(--accent), white 30%); }
+.legal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: color .2s ease, border-color .2s ease;
+}
+.legal-close:hover { color: var(--accent); border-color: var(--accent); }
+.legal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- Accessibility */
 @media (prefers-reduced-motion: reduce) {
@@ -1742,6 +1833,7 @@ pub fn App() -> Element {
     crate::tick::use_tick_driver(state, tuning, jobs, modules, techs, 1000.0, 8 * 60 * 60);
 
     let has_game = state.read().is_some();
+    let mut legal = use_signal(|| Option::<&'static str>::None);
 
     rsx! {
         style { dangerous_inner_html: CSS }
@@ -1751,6 +1843,55 @@ pub fn App() -> Element {
                 Console { state, tuning, jobs, modules, techs }
             } else {
                 OriginSelect { state, tuning, jobs, modules, techs, origins }
+            }
+            footer { class: "site-footer",
+                a {
+                    class: "foot-link",
+                    href: REPO_URL,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    "Source on GitHub"
+                }
+                span { class: "foot-sep", "\u{00b7}" }
+                button { class: "foot-link", onclick: move |_| legal.set(Some("privacy")), "Privacy" }
+                span { class: "foot-sep", "\u{00b7}" }
+                button { class: "foot-link", onclick: move |_| legal.set(Some("terms")), "Terms" }
+            }
+        }
+        if let Some(page) = legal() {
+            div { class: "legal-overlay", onclick: move |_| legal.set(None),
+                div {
+                    class: "legal-card",
+                    onclick: move |e| e.stop_propagation(),
+                    button {
+                        class: "legal-close",
+                        aria_label: "Close",
+                        onclick: move |_| legal.set(None),
+                        "\u{2715}"
+                    }
+                    if page == "privacy" {
+                        h2 { class: "legal-title", "Privacy" }
+                        p { "Cold Star runs entirely in your browser. There are no accounts and no servers \u{2014} nobody, including the author, receives or stores your game data." }
+                        p { "Your progress is saved in your browser\u{2019}s local storage, on this device only. \u{201c}Copy save link\u{201d} packs the whole game into a URL: nothing is uploaded, the save lives inside the link itself, and it travels only if you choose to share that link." }
+                        p { "There is no analytics, tracking, advertising, or cookies." }
+                        p { class: "legal-mut", "The one external request the game makes is to Google Fonts (fonts.googleapis.com), to load its two typefaces. Google may receive your IP address when serving those fonts, under Google\u{2019}s own privacy policy." }
+                    } else {
+                        h2 { class: "legal-title", "Terms & legal" }
+                        p { "Cold Star is free, open-source software, provided under the MIT License \u{201c}as is\u{201d}, without warranty of any kind. You may use, modify, and share it under that license." }
+                        p { "It is a non-commercial project made for the love of the genre, inspired by \u{2014} but not affiliated with or endorsed by \u{2014} the creators of \u{2018}A Dark Room\u{2019}." }
+                        p {
+                            "Source code, license, and how to contribute: "
+                            a {
+                                class: "foot-link",
+                                href: REPO_URL,
+                                target: "_blank",
+                                rel: "noopener noreferrer",
+                                "github.com/antoinehoriot/cold-star"
+                            }
+                        }
+                        p { class: "legal-mut", "This is a plain-language summary for players, not legal advice. The MIT License in the repository is the authoritative text." }
+                    }
+                }
             }
         }
     }
