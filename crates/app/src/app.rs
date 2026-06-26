@@ -162,14 +162,14 @@ body {
 
 /* ---- Console root (var carrier — NO filter here, keeps sticky rail working) */
 .console-root {
-  max-width: 660px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
 }
 
 /* ---- App shell */
 .console {
-  max-width: 660px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 0;
 }
@@ -205,9 +205,11 @@ body {
   background: linear-gradient(180deg, hsl(var(--warm) 28% 7%), hsl(var(--warm) 26% 6% / .92));
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(6px);
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
 }
 .rail-in {
-  max-width: 660px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 12px 1.5rem 10px;
   display: grid;
@@ -366,8 +368,16 @@ body {
 .log-line { color: var(--muted); padding: .05rem 0; }
 
 /* ---- Dashboard two-column grid */
-.dash { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 1.4rem; }
+.dash { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 1.4rem; }
 .col { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---- Content + log-rail grid */
+.content-grid { display: grid; grid-template-columns: 1fr; gap: 1.4rem; }
+.log-rail .log { max-height: none; }
+@media (min-width: 1100px) {
+  .content-grid { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
+  .log-rail { position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; }
+}
 
 /* ---- Panel */
 .panel {
@@ -800,6 +810,7 @@ body {
   .dash { grid-template-columns: 1fr; }
   .core-num { font-size: 40px; }
   .core-cap { font-size: 28px; }
+  .content-grid { grid-template-columns: 1fr; }
 }
 
 /* ---- Accessibility */
@@ -2744,6 +2755,8 @@ fn Console(
                 }
             }
         }
+        div { class: "content-grid",
+        div { class: "content-main",
         if build_menu_unlocked || economy_unlocked || power_visible || salvage_unlocked {
             // Two-column dashboard — panels appear via per-panel disclosure flags (§5).
             div { class: "dash",
@@ -2760,14 +2773,6 @@ fn Console(
                     }
                     if salvage_unlocked {
                         ResourcesPanel { rows: res_rows.clone() }
-                    }
-                    div { class: "panel",
-                        div { class: "eyebrow", "LOG" }
-                        div { class: "log",
-                            for (tick, text) in log_lines.clone() {
-                                div { class: "log-line", "[{tick}] {text}" }
-                            }
-                        }
                     }
                     if codex_unlocked {
                         CodexPanel { entries: codex_rows.clone() }
@@ -2910,19 +2915,27 @@ fn Console(
             }
         } else {
             // Reactor readout + buttons are rendered above; this branch is the
-            // bare opening (nothing disclosed yet) and adds the intro log.
+            // bare opening (nothing disclosed yet) and adds the intro res line.
             if salvage_unlocked {
                 div { class: "res",
                     "Scrap: {scrap:.0}"
                     if crew_arrived { "   \u{00b7}   Crew: {crew}" }
                 }
             }
-            div { class: "log",
-                for (tick, text) in log_lines {
-                    div { class: "log-line", "[{tick}] {text}" }
+        }
+        } // content-main
+        // Log rail — persistent right-hand column on wide screens, below on mobile
+        div { class: "log-rail",
+            div { class: "panel",
+                div { class: "eyebrow", "LOG" }
+                div { class: "log",
+                    for (tick, text) in log_lines {
+                        div { class: "log-line", "[{tick}] {text}" }
+                    }
                 }
             }
         }
+        } // content-grid
         } // life-veil
         } // else (no endgame)
         } // console-root
