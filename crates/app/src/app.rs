@@ -805,12 +805,26 @@ body {
   font-size: 12.5px;
 }
 
+/* ---- Navigation map + detail side-by-side */
+.nav-split { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+@media (min-width: 900px) {
+  .nav-split { grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); align-items: start; }
+}
+
+/* ---- Surface map width cap (prevent absurd stretch at 1320px) */
+.surfmap-scroll { max-width: 600px; }
+
+/* ---- Endgame / Watched containment (narrative focus, not a data spread) */
+.watched { max-width: 620px; margin-left: auto; margin-right: auto; }
+
+/* ---- Contact panel containment */
+.contact { max-width: 720px; }
+
 /* ---- Responsive */
 @media (max-width: 680px) {
   .dash { grid-template-columns: 1fr; }
   .core-num { font-size: 40px; }
   .core-cap { font-size: 28px; }
-  .content-grid { grid-template-columns: 1fr; }
 }
 
 /* ---- Accessibility */
@@ -1183,6 +1197,8 @@ fn NavigationPanel(
             if can_upgrade_drive {
                 button { class: "act", onclick: move |_| on_upgrade.call(()), "Recalibrate drive (+range)" }
             }
+            // Map + detail side-by-side on wide screens; stacked on narrow.
+            div { class: "nav-split",
             // SVG star map — live-tinted: range ring + current dot use var(--accent) via CSS.
             svg {
                 class: "navmap",
@@ -1283,6 +1299,7 @@ fn NavigationPanel(
                     }
                 }
             }
+            } // end nav-split
             if away {
                 div { class: "muted", "Return to the station to deposit cargo and resume control." }
             }
