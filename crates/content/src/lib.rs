@@ -167,6 +167,11 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "galaxy_inner_count must be in [2, galaxy_system_count]".into(),
         ));
     }
+    if t.galaxy_min_separation_frac <= 0.0 {
+        return Err(ContentError::Invalid(
+            "galaxy_min_separation_frac must be > 0".into(),
+        ));
+    }
     if t.ship_base_drive_range <= 0.0 || t.ship_cargo <= 0.0 {
         return Err(ContentError::Invalid(
             "ship_base_drive_range and ship_cargo must be > 0".into(),

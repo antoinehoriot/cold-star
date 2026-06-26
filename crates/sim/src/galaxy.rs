@@ -83,45 +83,60 @@ impl Galaxy {
                 best_idx
             };
 
-            // Sample up to 40 candidates; fall back to last (clamp into disc) if none valid.
+            // Sample up to 40 candidates that sit inside the disc AND respect the
+            // min separation. Each accepted candidate is in `[dist_min, dist_max]`
+            // of the anchor, so the reachability guarantee holds by construction.
             let anchor = systems[anchor_idx].pos;
-            let mut candidate = anchor; // fallback
+            let mut placed: Option<(f64, f64)> = None;
             for _ in 0..40 {
                 let angle = rng.next_f64() * std::f64::consts::TAU;
                 let dist = dist_min + rng.next_f64() * (dist_max - dist_min);
                 let cx = anchor.0 + angle.cos() * dist;
                 let cy = anchor.1 + angle.sin() * dist;
 
-                // Check: within galaxy_radius
-                let r = (cx * cx + cy * cy).sqrt();
-                if r > t.galaxy_radius {
-                    candidate = (cx, cy);
+                if (cx * cx + cy * cy).sqrt() > t.galaxy_radius {
                     continue;
                 }
-
-                // Check: not too close to any existing system
                 let too_close = systems.iter().any(|s| {
                     let dx = s.pos.0 - cx;
                     let dy = s.pos.1 - cy;
                     (dx * dx + dy * dy).sqrt() < sep
                 });
                 if too_close {
-                    candidate = (cx, cy);
                     continue;
                 }
-
-                candidate = (cx, cy);
+                placed = Some((cx, cy));
                 break;
             }
 
-            // If candidate is outside radius (fallback case), clamp it into the disc.
-            let r = (candidate.0 * candidate.0 + candidate.1 * candidate.1).sqrt();
-            let pos = if r > t.galaxy_radius {
-                let scale = (t.galaxy_radius - 1.0) / r;
-                (candidate.0 * scale, candidate.1 * scale)
-            } else {
-                candidate
-            };
+            // Anchor-preserving fallback: if no random spot worked, place the
+            // system exactly `dist_min` from the anchor TOWARD home. This keeps it
+            // within the band of the anchor (so inner stays within base drive range
+            // → reachable) and inside the disc (moving inward from an in-disc
+            // anchor). Separation may be violated here, but reachability is not.
+            let pos = placed.unwrap_or_else(|| {
+                let (ax, ay) = anchor;
+                let mag = (ax * ax + ay * ay).sqrt();
+                // Direction toward HOME (disc centre); fixed axis if the anchor IS home.
+                let (ux, uy) = if mag > 1e-9 {
+                    (-ax / mag, -ay / mag)
+                } else {
+                    (1.0, 0.0)
+                };
+                (ax + ux * dist_min, ay + uy * dist_min)
+            });
+
+            // The reachability guarantee, asserted in debug builds: every INNER
+            // system must sit within base drive range of an already-placed system.
+            debug_assert!(
+                is_frontier
+                    || systems.iter().any(|s| {
+                        let dx = s.pos.0 - pos.0;
+                        let dy = s.pos.1 - pos.1;
+                        (dx * dx + dy * dy).sqrt() <= base
+                    }),
+                "inner system {id} placed unreachable from all anchors at base range"
+            );
 
             // Star type draw comes AFTER position (keep star distribution independent).
             let star_type = weighted_star(&mut rng, t);
