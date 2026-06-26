@@ -806,7 +806,7 @@ mod tests {
     #[test]
     fn loads_m2_tuning() {
         let t = load().unwrap();
-        assert_eq!(t.fuel_per_output, 0.5);
+        assert_eq!(t.fuel_per_output, 0.2);
         assert_eq!(t.reactor_base_max_output, 5.0);
         assert_eq!(t.resource_base_cap, 100.0);
         assert_eq!(t.crew_ration_upkeep, 0.1);

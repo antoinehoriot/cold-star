@@ -109,6 +109,54 @@ fn over_assigned_refiners_brownout_is_recoverable() {
 }
 
 #[test]
+fn refiner_fuel_loop_net_produces_fuel() {
+    // Regression guard for the fuel economy: a Refiner loop must NET-PRODUCE
+    // fuel, not merely break even. (With fuel_per_output too high a Refiner's
+    // own power draw burned exactly as much fuel as it produced — net zero — so
+    // fuel could only ever drain. The fuel-making job must actually make fuel.)
+    let (t, j, m, tc) = setup();
+    let w = World {
+        tuning: &t,
+        jobs: &j,
+        modules: &m,
+        techs: &tc,
+    };
+    // A self-sustaining loop: 4 Salvagers feed Scrap, 2 Refiners turn it to Fuel.
+    // (Salvagers make 1 Scrap each, Refiners eat 2 each → 4 Scrap in, 4 out.)
+    let mut s = GameState::new(&w, 11);
+    s.crew.total = 6;
+    s.reactor.charge = s.reactor.capacity; // bootstrap power buffer
+    s.resources.rations = 1000.0; // keep the crew fed (starving halves output)
+    s.resources.add(ResourceKind::Fuel, 8.0); // a little fuel to bootstrap generation
+    s.resources.add(ResourceKind::Scrap, 100.0); // enough to build the Refinery; Salvagers refill it
+    s.apply(&w, Action::Build(ModuleId::Refinery)).unwrap();
+    s.apply(
+        &w,
+        Action::AssignCrew {
+            job: JobId::Salvager,
+            delta: 4,
+        },
+    )
+    .unwrap();
+    s.apply(
+        &w,
+        Action::AssignCrew {
+            job: JobId::Refiner,
+            delta: 2,
+        },
+    )
+    .unwrap();
+    let fuel_start = s.resources.amount(ResourceKind::Fuel);
+    s.advance(&w, 100);
+    let fuel_end = s.resources.amount(ResourceKind::Fuel);
+    assert!(
+        fuel_end > fuel_start,
+        "a fed, scrap-supplied Refiner loop must net-produce Fuel, not drain it \
+         (start {fuel_start}, end {fuel_end})"
+    );
+}
+
+#[test]
 fn can_research_core_tuning_with_a_scientist_economy() {
     let (tn, j, m) = (
         content::load().unwrap(),

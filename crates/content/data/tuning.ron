@@ -14,7 +14,7 @@
     arrival_interval: 30,
     crew_trickle: 0.5,
     log_capacity: 100,
-    fuel_per_output: 0.5,
+    fuel_per_output: 0.2,
     reactor_base_max_output: 5.0,
     resource_base_cap: 100.0,
     crew_ration_upkeep: 0.1,
