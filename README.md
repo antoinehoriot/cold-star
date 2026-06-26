@@ -11,6 +11,14 @@ WebAssembly.
 Inspired by the disclosure-driven storytelling of *A Dark Room* — almost no
 exposition; the log, the research, the ruins, and the numbers carry the meaning.
 
+> [!NOTE]
+> **AI disclosure.** This project was built as an experiment in AI-assisted,
+> agentic development: AI (Anthropic's Claude, via Claude Code) was used heavily
+> throughout — design, implementation, testing, code review, and this
+> documentation. Most commits are co-authored accordingly. Treat the code with
+> that context in mind: it's tested and reviewed, but it's an experiment first.
+> Contributions from humans and their tools are equally welcome.
+
 ---
 
 ## Status
