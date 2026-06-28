@@ -11,6 +11,8 @@ WebAssembly.
 Inspired by the disclosure-driven storytelling of *A Dark Room* — almost no
 exposition; the log, the research, the ruins, and the numbers carry the meaning.
 
+![Cold Star — choosing an origin](assets/screenshots/main-menu.png)
+
 > [!NOTE]
 > **AI disclosure.** This project was built as an experiment in AI-assisted,
 > agentic development: AI (Anthropic's Claude, via Claude Code) was used heavily
