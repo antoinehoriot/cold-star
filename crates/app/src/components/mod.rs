@@ -1,0 +1,9 @@
+pub(crate) mod build;
+pub(crate) mod codex;
+pub(crate) mod jobs;
+pub(crate) mod loadout;
+pub(crate) mod munitions;
+pub(crate) mod power;
+pub(crate) mod priority;
+pub(crate) mod research;
+pub(crate) mod resources;

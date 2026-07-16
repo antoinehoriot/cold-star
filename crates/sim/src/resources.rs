@@ -119,15 +119,6 @@ impl Resources {
         }
         true
     }
-
-    // ---- M1 back-compat wrappers (keep the app + M1 call sites compiling) ----
-    pub fn add_scrap(&mut self, amount: f64) {
-        self.add(ResourceKind::Scrap, amount);
-    }
-
-    pub fn try_spend_scrap(&mut self, amount: f64) -> bool {
-        self.try_spend(ResourceKind::Scrap, amount)
-    }
 }
 
 #[cfg(test)]

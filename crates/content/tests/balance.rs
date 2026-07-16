@@ -191,12 +191,12 @@ fn can_research_core_tuning_with_a_scientist_economy() {
     let mut started = false;
     for _ in 0..400 {
         s.advance(&w, 1);
-        if !started && s.resources.amount(ResourceKind::Data) >= 5.0 {
-            if s.apply(&w, Action::StartResearch(TechId::CoreTuning))
+        if !started
+            && s.resources.amount(ResourceKind::Data) >= 5.0
+            && s.apply(&w, Action::StartResearch(TechId::CoreTuning))
                 .is_ok()
-            {
-                started = true;
-            }
+        {
+            started = true;
         }
     }
     assert!(

@@ -27,7 +27,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -p sim -p content -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest

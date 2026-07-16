@@ -37,23 +37,23 @@ pub fn load_initial(
         }
     }
 
-    if let Ok(encoded) = LocalStorage::get::<String>(KEY_SAVE) {
-        if let Ok(mut state) = save::decode(&encoded) {
-            if let Ok(saved_at) = LocalStorage::get::<f64>(KEY_SAVE_AT) {
-                let n = ticks_for_elapsed(js_sys::Date::now() - saved_at, TICK_MS, OFFLINE_CAP);
-                let j = JobRegistry(jobs.to_vec());
-                let m = ModuleRegistry(modules.to_vec());
-                let tc = TechRegistry(techs.to_vec());
-                let world = World {
-                    tuning,
-                    jobs: &j,
-                    modules: &m,
-                    techs: &tc,
-                };
-                state.advance(&world, n);
-            }
-            return Some(state);
+    if let Ok(encoded) = LocalStorage::get::<String>(KEY_SAVE)
+        && let Ok(mut state) = save::decode(&encoded)
+    {
+        if let Ok(saved_at) = LocalStorage::get::<f64>(KEY_SAVE_AT) {
+            let n = ticks_for_elapsed(js_sys::Date::now() - saved_at, TICK_MS, OFFLINE_CAP);
+            let j = JobRegistry(jobs.to_vec());
+            let m = ModuleRegistry(modules.to_vec());
+            let tc = TechRegistry(techs.to_vec());
+            let world = World {
+                tuning,
+                jobs: &j,
+                modules: &m,
+                techs: &tc,
+            };
+            state.advance(&world, n);
         }
+        return Some(state);
     }
 
     None
@@ -71,16 +71,16 @@ pub fn save(state: &GameState) {
 
 /// Put a shareable link in the address bar (fragment) and the clipboard.
 pub fn copy_link(state: &GameState) {
-    if let Ok(encoded) = save::encode(state) {
-        if let Some(win) = web_sys::window() {
-            let _ = win.location().set_hash(&format!("s={encoded}"));
-            if let Ok(href) = win.location().href() {
-                let _ = win.navigator().clipboard().write_text(&href);
-            }
-            alert(
-                "Save link is in the address bar (and copied to your clipboard if your browser allowed it).",
-            );
+    if let Ok(encoded) = save::encode(state)
+        && let Some(win) = web_sys::window()
+    {
+        let _ = win.location().set_hash(&format!("s={encoded}"));
+        if let Ok(href) = win.location().href() {
+            let _ = win.navigator().clipboard().write_text(&href);
         }
+        alert(
+            "Save link is in the address bar (and copied to your clipboard if your browser allowed it).",
+        );
     }
 }
 
