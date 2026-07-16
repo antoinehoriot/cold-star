@@ -14,6 +14,7 @@ pub enum Origin {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OriginStart {
     pub scrap: f64,
     pub reactor_capacity: f64,
@@ -23,6 +24,7 @@ pub struct OriginStart {
 /// NOTE: per-origin tuning overrides (spec §5 `tuning_overrides`) are deferred to
 /// M2 — all M1 origins share base tuning, differing only by labels + `start`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OriginDef {
     pub id: Origin,
     pub name: String,

@@ -24,6 +24,7 @@ pub enum TechId {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Grant {
     ReactorMaxOutput(f64),
     ReactorCapacity(f64),
@@ -33,6 +34,7 @@ pub enum Grant {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tech {
     pub id: TechId,
     pub name: String,

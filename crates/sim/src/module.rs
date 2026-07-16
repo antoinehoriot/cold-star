@@ -23,7 +23,7 @@ pub enum ModuleId {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ModuleUnlocks {
     pub job: Option<JobId>,
     pub housing: u32,
@@ -34,6 +34,7 @@ pub struct ModuleUnlocks {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Module {
     pub id: ModuleId,
     pub name: String,

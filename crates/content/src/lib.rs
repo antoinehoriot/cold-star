@@ -25,137 +25,296 @@ pub fn load() -> Result<Tuning, ContentError> {
     Ok(tuning)
 }
 
+/// How a float tuning field is constrained.
+#[derive(Clone, Copy)]
+enum Check {
+    /// Finite only — negative values are legal.
+    Finite,
+    /// Finite and >= 0.
+    NonNeg,
+    /// Finite and > 0.
+    Positive,
+    /// Finite and in (0, 1].
+    UnitOpen,
+    /// Finite and in [0, 1].
+    UnitClosed,
+}
+
+impl Check {
+    fn ok(self, v: f64) -> bool {
+        v.is_finite()
+            && match self {
+                Check::Finite => true,
+                Check::NonNeg => v >= 0.0,
+                Check::Positive => v > 0.0,
+                Check::UnitOpen => v > 0.0 && v <= 1.0,
+                Check::UnitClosed => (0.0..=1.0).contains(&v),
+            }
+    }
+    fn expects(self) -> &'static str {
+        match self {
+            Check::Finite => "finite",
+            Check::NonNeg => "finite >= 0",
+            Check::Positive => "finite > 0",
+            Check::UnitOpen => "finite in (0, 1]",
+            Check::UnitClosed => "finite in [0, 1]",
+        }
+    }
+}
+
 pub fn validate(t: &Tuning) -> Result<(), ContentError> {
-    fn finite_pos(v: f64) -> bool {
-        v.is_finite() && v > 0.0
-    }
-    fn finite_nonneg(v: f64) -> bool {
-        v.is_finite() && v >= 0.0
-    }
-    if !finite_pos(t.reactor_capacity) {
-        return Err(ContentError::Invalid(
-            "reactor_capacity must be finite > 0".into(),
-        ));
-    }
-    if !finite_nonneg(t.reactor_drain_per_tick) {
-        return Err(ContentError::Invalid(
-            "reactor_drain_per_tick must be finite >= 0".into(),
-        ));
-    }
-    for (name, frac) in [
+    use Check::{Finite, NonNeg, Positive, UnitClosed, UnitOpen};
+    // One entry per validated float field: (name, value, check).
+    // NOTE: salvage_cooldown_ticks and surface_depth_max are u32 where every
+    // representable value is legal (0 = no cooldown / entry-only surface), so
+    // the type itself is the validation.
+    let float_fields = [
+        // Reactor
+        ("reactor_capacity", t.reactor_capacity, Positive),
+        ("reactor_drain_per_tick", t.reactor_drain_per_tick, NonNeg),
         (
             "reactor_establish_threshold_frac",
             t.reactor_establish_threshold_frac,
+            UnitOpen,
         ),
         (
             "reactor_failing_threshold_frac",
             t.reactor_failing_threshold_frac,
+            UnitOpen,
         ),
-    ] {
-        if !frac.is_finite() || frac <= 0.0 || frac > 1.0 {
+        ("reactor_ignition_seed", t.reactor_ignition_seed, NonNeg),
+        ("reactor_baseline_draw", t.reactor_baseline_draw, NonNeg),
+        // Feeding / salvage / crew
+        ("feed_cost_scrap", t.feed_cost_scrap, NonNeg),
+        ("feed_charge", t.feed_charge, NonNeg),
+        ("salvage_yield", t.salvage_yield, NonNeg),
+        ("crew_source_cost", t.crew_source_cost, NonNeg),
+        ("crew_trickle", t.crew_trickle, NonNeg),
+        // M2 — power budget & economy
+        ("fuel_per_output", t.fuel_per_output, NonNeg),
+        ("reactor_base_max_output", t.reactor_base_max_output, NonNeg),
+        ("resource_base_cap", t.resource_base_cap, NonNeg),
+        ("crew_ration_upkeep", t.crew_ration_upkeep, NonNeg),
+        ("starving_efficiency", t.starving_efficiency, UnitOpen),
+        // M3 — life support
+        (
+            "atmosphere_draw_per_crew",
+            t.atmosphere_draw_per_crew,
+            NonNeg,
+        ),
+        ("thermal_draw", t.thermal_draw, NonNeg),
+        ("thermal_failure_drain", t.thermal_failure_drain, NonNeg),
+        // M4 — galaxy
+        ("galaxy_radius", t.galaxy_radius, NonNeg),
+        ("galaxy_reveal_radius", t.galaxy_reveal_radius, NonNeg),
+        (
+            "galaxy_min_separation_frac",
+            t.galaxy_min_separation_frac,
+            Positive,
+        ),
+        ("galaxy_frontier_reach", t.galaxy_frontier_reach, NonNeg),
+        ("star_weight_dwarf", t.star_weight_dwarf, NonNeg),
+        ("star_weight_mainseq", t.star_weight_mainseq, NonNeg),
+        ("star_weight_neutron", t.star_weight_neutron, NonNeg),
+        ("star_weight_dead", t.star_weight_dead, NonNeg),
+        ("star_weight_giant", t.star_weight_giant, NonNeg),
+        // M4 — ship / jump / scan / sites
+        ("ship_base_drive_range", t.ship_base_drive_range, Positive),
+        ("ship_cargo", t.ship_cargo, Positive),
+        ("ship_base_hull", t.ship_base_hull, NonNeg),
+        ("jump_base_cost", t.jump_base_cost, NonNeg),
+        ("jump_drive_factor", t.jump_drive_factor, NonNeg),
+        ("transit_ticks_factor", t.transit_ticks_factor, NonNeg),
+        ("scan_data_cost", t.scan_data_cost, NonNeg),
+        ("site_asteroid_isotopes", t.site_asteroid_isotopes, NonNeg),
+        ("site_asteroid_fuel", t.site_asteroid_fuel, NonNeg),
+        (
+            "site_derelict_components",
+            t.site_derelict_components,
+            NonNeg,
+        ),
+        ("site_derelict_data", t.site_derelict_data, NonNeg),
+        ("reward_gradient", t.reward_gradient, NonNeg),
+        ("drive_upgrade_isotopes", t.drive_upgrade_isotopes, NonNeg),
+        ("drive_upgrade_step", t.drive_upgrade_step, NonNeg),
+        ("scavenge_fuel", t.scavenge_fuel, NonNeg),
+        // M5 — worlds & surface
+        ("planet_site_weight", t.planet_site_weight, NonNeg),
+        ("suit_max", t.suit_max, Positive),
+        ("suit_drain_per_tick", t.suit_drain_per_tick, NonNeg),
+        ("suit_hazard_damage", t.suit_hazard_damage, NonNeg),
+        ("surface_cache_base", t.surface_cache_base, NonNeg),
+        ("surface_ruin_data", t.surface_ruin_data, NonNeg),
+        ("surface_life_harvest", t.surface_life_harvest, NonNeg),
+        ("surface_life_leave_data", t.surface_life_leave_data, NonNeg),
+        ("surface_depth_reward", t.surface_depth_reward, NonNeg),
+        // CB1 — combat
+        ("marine_hp", t.marine_hp, NonNeg),
+        ("marine_atk", t.marine_atk, NonNeg),
+        ("marine_def_base", t.marine_def_base, NonNeg),
+        ("marine_ration_upkeep", t.marine_ration_upkeep, NonNeg),
+        ("morale_max", t.morale_max, Positive),
+        ("morale_floor", t.morale_floor, UnitOpen),
+        ("morale_rout", t.morale_rout, NonNeg),
+        ("morale_per_death", t.morale_per_death, NonNeg),
+        ("morale_per_flee", t.morale_per_flee, NonNeg),
+        ("morale_per_starve_tick", t.morale_per_starve_tick, NonNeg),
+        ("morale_recover_per_tick", t.morale_recover_per_tick, NonNeg),
+        ("starve_hp_per_tick", t.starve_hp_per_tick, NonNeg),
+        ("weapon_step", t.weapon_step, NonNeg),
+        ("armor_hp_step", t.armor_hp_step, NonNeg),
+        ("armor_def_step", t.armor_def_step, NonNeg),
+        ("medgel_heal", t.medgel_heal, NonNeg),
+        ("grenade_damage", t.grenade_damage, NonNeg),
+        ("shield_def", t.shield_def, NonNeg),
+        ("stance_atk_mult", t.stance_atk_mult, NonNeg),
+        ("stance_def_bonus", t.stance_def_bonus, NonNeg),
+        ("remnant_hp", t.remnant_hp, NonNeg),
+        ("remnant_atk", t.remnant_atk, NonNeg),
+        ("remnant_def", t.remnant_def, NonNeg),
+        ("remnant_speed", t.remnant_speed, NonNeg),
+        ("remnant_components", t.remnant_components, NonNeg),
+        ("remnant_data", t.remnant_data, NonNeg),
+        ("combat_depth_mult", t.combat_depth_mult, NonNeg),
+        ("flee_satchel_loss_frac", t.flee_satchel_loss_frac, NonNeg),
+        // CB1 — gear/consumable crafting costs
+        ("weapon_upgrade_alloy", t.weapon_upgrade_alloy, NonNeg),
+        (
+            "weapon_upgrade_components",
+            t.weapon_upgrade_components,
+            NonNeg,
+        ),
+        ("armor_upgrade_alloy", t.armor_upgrade_alloy, NonNeg),
+        (
+            "armor_upgrade_components",
+            t.armor_upgrade_components,
+            NonNeg,
+        ),
+        ("medgel_cost", t.medgel_cost, NonNeg),
+        ("grenade_cost", t.grenade_cost, NonNeg),
+        ("shield_cost", t.shield_cost, NonNeg),
+        // CB2 — aliens & disposition (band thresholds and start dispositions
+        // may legally be negative: finite-only, ordering asserted below)
+        ("disp_hostile", t.disp_hostile, Finite),
+        ("disp_neutral", t.disp_neutral, Finite),
+        ("disp_curious", t.disp_curious, Finite),
+        ("fauna_start_disp", t.fauna_start_disp, Finite),
+        ("peer_start_disp", t.peer_start_disp, Finite),
+        ("disp_spread", t.disp_spread, NonNeg),
+        ("parley_shift", t.parley_shift, NonNeg),
+        ("gift_shift", t.gift_shift, NonNeg),
+        ("gift_cost", t.gift_cost, NonNeg),
+        ("trade_give", t.trade_give, NonNeg),
+        ("trade_get", t.trade_get, NonNeg),
+        ("trade_disp_shift", t.trade_disp_shift, NonNeg),
+        ("observe_data", t.observe_data, NonNeg),
+        ("observe_shift", t.observe_shift, NonNeg),
+        ("harvest_fauna_yield", t.harvest_fauna_yield, NonNeg),
+        ("fauna_hp", t.fauna_hp, NonNeg),
+        ("fauna_atk", t.fauna_atk, NonNeg),
+        ("fauna_def", t.fauna_def, NonNeg),
+        ("peer_hp", t.peer_hp, NonNeg),
+        ("peer_atk", t.peer_atk, NonNeg),
+        ("peer_def", t.peer_def, NonNeg),
+        ("peer_gear_mirror", t.peer_gear_mirror, NonNeg),
+        ("peer_salvage", t.peer_salvage, NonNeg),
+        ("fauna_salvage", t.fauna_salvage, NonNeg),
+        ("peace_band", t.peace_band, NonNeg),
+        // CB3 — ships in the dark
+        ("contact_chance", t.contact_chance, UnitClosed),
+        ("contact_peer_share", t.contact_peer_share, UnitClosed),
+        ("ship_peer_start_disp", t.ship_peer_start_disp, NonNeg),
+        ("ship_disp_spread", t.ship_disp_spread, NonNeg),
+        ("ship_base_atk", t.ship_base_atk, NonNeg),
+        ("ship_base_def", t.ship_base_def, NonNeg),
+        ("ship_speed", t.ship_speed, NonNeg),
+        ("ship_weapon_step", t.ship_weapon_step, NonNeg),
+        ("hull_plating_def_step", t.hull_plating_def_step, NonNeg),
+        ("hull_plating_hp_step", t.hull_plating_hp_step, NonNeg),
+        ("peer_ship_hp", t.peer_ship_hp, NonNeg),
+        ("peer_ship_atk", t.peer_ship_atk, NonNeg),
+        ("peer_ship_def", t.peer_ship_def, NonNeg),
+        ("peer_ship_mirror", t.peer_ship_mirror, NonNeg),
+        ("remnant_ship_hp", t.remnant_ship_hp, NonNeg),
+        ("remnant_ship_atk", t.remnant_ship_atk, NonNeg),
+        ("remnant_ship_def", t.remnant_ship_def, NonNeg),
+        ("ship_enemy_speed", t.ship_enemy_speed, NonNeg),
+        ("ship_salvage_components", t.ship_salvage_components, NonNeg),
+        ("ship_salvage_isotopes", t.ship_salvage_isotopes, NonNeg),
+        ("ship_salvage_data", t.ship_salvage_data, NonNeg),
+        ("repair_drone_heal", t.repair_drone_heal, NonNeg),
+        ("repair_drone_cost", t.repair_drone_cost, NonNeg),
+        (
+            "ship_weapon_upgrade_alloy",
+            t.ship_weapon_upgrade_alloy,
+            NonNeg,
+        ),
+        (
+            "ship_weapon_upgrade_components",
+            t.ship_weapon_upgrade_components,
+            NonNeg,
+        ),
+        (
+            "hull_plating_upgrade_alloy",
+            t.hull_plating_upgrade_alloy,
+            NonNeg,
+        ),
+        (
+            "hull_plating_upgrade_components",
+            t.hull_plating_upgrade_components,
+            NonNeg,
+        ),
+        ("hull_regen_docked", t.hull_regen_docked, NonNeg),
+        ("retreat_cargo_loss", t.retreat_cargo_loss, UnitClosed),
+        ("hull_retreat_floor", t.hull_retreat_floor, NonNeg),
+        // M6a — the turn & endings
+        ("expansion_w_peers", t.expansion_w_peers, NonNeg),
+        ("expansion_w_strip", t.expansion_w_strip, NonNeg),
+        ("expansion_w_consume", t.expansion_w_consume, NonNeg),
+        ("expansion_w_systems", t.expansion_w_systems, NonNeg),
+        ("watched_threshold", t.watched_threshold, NonNeg),
+        ("communion_min_spared", t.communion_min_spared, NonNeg),
+        ("communion_max_kills", t.communion_max_kills, NonNeg),
+        ("pattern_max_kills", t.pattern_max_kills, NonNeg),
+        // M6b — word-drift
+        ("drift_t1", t.drift_t1, NonNeg),
+        ("drift_t2", t.drift_t2, NonNeg),
+        ("drift_t3", t.drift_t3, NonNeg),
+    ];
+    for (name, v, check) in float_fields {
+        if !check.ok(v) {
             return Err(ContentError::Invalid(format!(
-                "{name} must be finite in (0, 1]"
+                "{name} must be {}",
+                check.expects()
             )));
         }
     }
+
+    // Integer fields that must be >= 1.
+    for (name, v) in [
+        ("crew_cap", u64::from(t.crew_cap)),
+        ("arrival_interval", u64::from(t.arrival_interval)),
+        ("log_capacity", t.log_capacity as u64),
+        ("base_housing", u64::from(t.base_housing)),
+        ("atmosphere_grace_max", u64::from(t.atmosphere_grace_max)),
+        ("crew_loss_interval", u64::from(t.crew_loss_interval)),
+        ("transit_ticks_base", u64::from(t.transit_ticks_base)),
+        ("scan_ticks", u64::from(t.scan_ticks)),
+        ("site_resolve_ticks", u64::from(t.site_resolve_ticks)),
+        ("scavenge_ticks", u64::from(t.scavenge_ticks)),
+        ("traverse_ticks", u64::from(t.traverse_ticks)),
+        ("shield_ticks", u64::from(t.shield_ticks)),
+    ] {
+        if v < 1 {
+            return Err(ContentError::Invalid(format!("{name} must be >= 1")));
+        }
+    }
+
+    // Relational / cross-field checks.
     if t.reactor_failing_threshold_frac > t.reactor_establish_threshold_frac {
         return Err(ContentError::Invalid(
             "reactor_failing_threshold_frac must be <= reactor_establish_threshold_frac".into(),
         ));
-    }
-    for (name, v) in [
-        ("reactor_ignition_seed", t.reactor_ignition_seed),
-        ("reactor_baseline_draw", t.reactor_baseline_draw),
-        ("feed_cost_scrap", t.feed_cost_scrap),
-        ("feed_charge", t.feed_charge),
-        ("salvage_yield", t.salvage_yield),
-        ("crew_source_cost", t.crew_source_cost),
-        ("crew_trickle", t.crew_trickle),
-    ] {
-        if !finite_nonneg(v) {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
-    }
-    if t.crew_cap < 1 {
-        return Err(ContentError::Invalid("crew_cap must be >= 1".into()));
-    }
-    if t.arrival_interval < 1 {
-        return Err(ContentError::Invalid(
-            "arrival_interval must be >= 1".into(),
-        ));
-    }
-    if t.log_capacity < 1 {
-        return Err(ContentError::Invalid("log_capacity must be >= 1".into()));
-    }
-    for (name, v) in [
-        ("fuel_per_output", t.fuel_per_output),
-        ("reactor_base_max_output", t.reactor_base_max_output),
-        ("resource_base_cap", t.resource_base_cap),
-        ("crew_ration_upkeep", t.crew_ration_upkeep),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
-    }
-    if !(t.starving_efficiency.is_finite()
-        && t.starving_efficiency > 0.0
-        && t.starving_efficiency <= 1.0)
-    {
-        return Err(ContentError::Invalid(
-            "starving_efficiency must be finite in (0, 1]".into(),
-        ));
-    }
-    if t.base_housing < 1 {
-        return Err(ContentError::Invalid("base_housing must be >= 1".into()));
-    }
-    for (name, v) in [
-        ("atmosphere_draw_per_crew", t.atmosphere_draw_per_crew),
-        ("thermal_draw", t.thermal_draw),
-        ("thermal_failure_drain", t.thermal_failure_drain),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
-    }
-    if t.atmosphere_grace_max < 1 {
-        return Err(ContentError::Invalid(
-            "atmosphere_grace_max must be >= 1".into(),
-        ));
-    }
-    if t.crew_loss_interval < 1 {
-        return Err(ContentError::Invalid(
-            "crew_loss_interval must be >= 1".into(),
-        ));
-    }
-    for (name, v) in [
-        ("galaxy_radius", t.galaxy_radius),
-        ("galaxy_reveal_radius", t.galaxy_reveal_radius),
-        ("galaxy_min_separation_frac", t.galaxy_min_separation_frac),
-        ("galaxy_frontier_reach", t.galaxy_frontier_reach),
-        ("star_weight_dwarf", t.star_weight_dwarf),
-        ("star_weight_mainseq", t.star_weight_mainseq),
-        ("star_weight_neutron", t.star_weight_neutron),
-        ("star_weight_dead", t.star_weight_dead),
-        ("star_weight_giant", t.star_weight_giant),
-        ("ship_base_drive_range", t.ship_base_drive_range),
-        ("ship_cargo", t.ship_cargo),
-        ("ship_base_hull", t.ship_base_hull),
-        ("jump_base_cost", t.jump_base_cost),
-        ("jump_drive_factor", t.jump_drive_factor),
-        ("transit_ticks_factor", t.transit_ticks_factor),
-        ("scan_data_cost", t.scan_data_cost),
-        ("site_asteroid_isotopes", t.site_asteroid_isotopes),
-        ("site_asteroid_fuel", t.site_asteroid_fuel),
-        ("site_derelict_components", t.site_derelict_components),
-        ("site_derelict_data", t.site_derelict_data),
-        ("reward_gradient", t.reward_gradient),
-        ("drive_upgrade_isotopes", t.drive_upgrade_isotopes),
-        ("drive_upgrade_step", t.drive_upgrade_step),
-        ("scavenge_fuel", t.scavenge_fuel),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
     }
     if t.galaxy_system_count < 2 {
         return Err(ContentError::Invalid(
@@ -167,26 +326,6 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "galaxy_inner_count must be in [2, galaxy_system_count]".into(),
         ));
     }
-    if t.galaxy_min_separation_frac <= 0.0 {
-        return Err(ContentError::Invalid(
-            "galaxy_min_separation_frac must be > 0".into(),
-        ));
-    }
-    if t.ship_base_drive_range <= 0.0 || t.ship_cargo <= 0.0 {
-        return Err(ContentError::Invalid(
-            "ship_base_drive_range and ship_cargo must be > 0".into(),
-        ));
-    }
-    for (name, v) in [
-        ("transit_ticks_base", t.transit_ticks_base),
-        ("scan_ticks", t.scan_ticks),
-        ("site_resolve_ticks", t.site_resolve_ticks),
-        ("scavenge_ticks", t.scavenge_ticks),
-    ] {
-        if v < 1 {
-            return Err(ContentError::Invalid(format!("{name} must be >= 1")));
-        }
-    }
     if t.star_weight_dwarf
         + t.star_weight_mainseq
         + t.star_weight_neutron
@@ -196,145 +335,10 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
     {
         return Err(ContentError::Invalid("star weights must sum to > 0".into()));
     }
-    for (name, v) in [
-        ("planet_site_weight", t.planet_site_weight),
-        ("suit_max", t.suit_max),
-        ("suit_drain_per_tick", t.suit_drain_per_tick),
-        ("suit_hazard_damage", t.suit_hazard_damage),
-        ("surface_cache_base", t.surface_cache_base),
-        ("surface_ruin_data", t.surface_ruin_data),
-        ("surface_life_harvest", t.surface_life_harvest),
-        ("surface_life_leave_data", t.surface_life_leave_data),
-        ("surface_depth_reward", t.surface_depth_reward),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
-    }
-    if t.suit_max <= 0.0 {
-        return Err(ContentError::Invalid("suit_max must be > 0".into()));
-    }
-    if t.traverse_ticks < 1 {
-        return Err(ContentError::Invalid("traverse_ticks must be >= 1".into()));
-    }
     if t.surface_layer_min < 1 || t.surface_layer_max < t.surface_layer_min {
         return Err(ContentError::Invalid(
             "surface_layer_max must be >= surface_layer_min >= 1".into(),
         ));
-    }
-    // CB1 — combat float fields: finite >= 0
-    for (name, v) in [
-        ("marine_hp", t.marine_hp),
-        ("marine_atk", t.marine_atk),
-        ("marine_def_base", t.marine_def_base),
-        ("marine_ration_upkeep", t.marine_ration_upkeep),
-        ("morale_rout", t.morale_rout),
-        ("morale_per_death", t.morale_per_death),
-        ("morale_per_flee", t.morale_per_flee),
-        ("morale_per_starve_tick", t.morale_per_starve_tick),
-        ("morale_recover_per_tick", t.morale_recover_per_tick),
-        ("starve_hp_per_tick", t.starve_hp_per_tick),
-        ("weapon_step", t.weapon_step),
-        ("armor_hp_step", t.armor_hp_step),
-        ("armor_def_step", t.armor_def_step),
-        ("medgel_heal", t.medgel_heal),
-        ("grenade_damage", t.grenade_damage),
-        ("shield_def", t.shield_def),
-        ("stance_atk_mult", t.stance_atk_mult),
-        ("stance_def_bonus", t.stance_def_bonus),
-        ("remnant_hp", t.remnant_hp),
-        ("remnant_atk", t.remnant_atk),
-        ("remnant_def", t.remnant_def),
-        ("remnant_speed", t.remnant_speed),
-        ("remnant_components", t.remnant_components),
-        ("remnant_data", t.remnant_data),
-        ("combat_depth_mult", t.combat_depth_mult),
-        ("flee_satchel_loss_frac", t.flee_satchel_loss_frac),
-        ("weapon_upgrade_alloy", t.weapon_upgrade_alloy),
-        ("weapon_upgrade_components", t.weapon_upgrade_components),
-        ("armor_upgrade_alloy", t.armor_upgrade_alloy),
-        ("armor_upgrade_components", t.armor_upgrade_components),
-        ("medgel_cost", t.medgel_cost),
-        ("grenade_cost", t.grenade_cost),
-        ("shield_cost", t.shield_cost),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
-    }
-    if !t.morale_max.is_finite() || t.morale_max <= 0.0 {
-        return Err(ContentError::Invalid(
-            "morale_max must be finite > 0".into(),
-        ));
-    }
-    if t.shield_ticks < 1 {
-        return Err(ContentError::Invalid("shield_ticks must be >= 1".into()));
-    }
-    if !t.morale_floor.is_finite() || t.morale_floor <= 0.0 || t.morale_floor > 1.0 {
-        return Err(ContentError::Invalid(
-            "morale_floor must be finite in (0, 1]".into(),
-        ));
-    }
-    // CB3 — ships in the dark: finite >= 0
-    for (name, v) in [
-        ("contact_chance", t.contact_chance),
-        ("contact_peer_share", t.contact_peer_share),
-        ("ship_peer_start_disp", t.ship_peer_start_disp),
-        ("ship_disp_spread", t.ship_disp_spread),
-        ("ship_base_atk", t.ship_base_atk),
-        ("ship_base_def", t.ship_base_def),
-        ("ship_speed", t.ship_speed),
-        ("ship_weapon_step", t.ship_weapon_step),
-        ("hull_plating_def_step", t.hull_plating_def_step),
-        ("hull_plating_hp_step", t.hull_plating_hp_step),
-        ("peer_ship_hp", t.peer_ship_hp),
-        ("peer_ship_atk", t.peer_ship_atk),
-        ("peer_ship_def", t.peer_ship_def),
-        ("peer_ship_mirror", t.peer_ship_mirror),
-        ("remnant_ship_hp", t.remnant_ship_hp),
-        ("remnant_ship_atk", t.remnant_ship_atk),
-        ("remnant_ship_def", t.remnant_ship_def),
-        ("ship_enemy_speed", t.ship_enemy_speed),
-        ("ship_salvage_components", t.ship_salvage_components),
-        ("ship_salvage_isotopes", t.ship_salvage_isotopes),
-        ("ship_salvage_data", t.ship_salvage_data),
-        ("repair_drone_heal", t.repair_drone_heal),
-        ("repair_drone_cost", t.repair_drone_cost),
-        ("ship_weapon_upgrade_alloy", t.ship_weapon_upgrade_alloy),
-        (
-            "ship_weapon_upgrade_components",
-            t.ship_weapon_upgrade_components,
-        ),
-        ("hull_plating_upgrade_alloy", t.hull_plating_upgrade_alloy),
-        (
-            "hull_plating_upgrade_components",
-            t.hull_plating_upgrade_components,
-        ),
-        ("hull_regen_docked", t.hull_regen_docked),
-        ("retreat_cargo_loss", t.retreat_cargo_loss),
-        ("hull_retreat_floor", t.hull_retreat_floor),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
-    }
-    // M6a — the turn & endings: finite >= 0
-    for (name, v) in [
-        ("expansion_w_peers", t.expansion_w_peers),
-        ("expansion_w_strip", t.expansion_w_strip),
-        ("expansion_w_consume", t.expansion_w_consume),
-        ("expansion_w_systems", t.expansion_w_systems),
-        ("watched_threshold", t.watched_threshold),
-        ("communion_min_spared", t.communion_min_spared),
-        ("communion_max_kills", t.communion_max_kills),
-        ("pattern_max_kills", t.pattern_max_kills),
-        ("drift_t1", t.drift_t1),
-        ("drift_t2", t.drift_t2),
-        ("drift_t3", t.drift_t3),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
     }
     // M6b — word-drift tier ordering
     if !(t.drift_t1 < t.drift_t2 && t.drift_t2 < t.drift_t3) {
@@ -342,60 +346,11 @@ pub fn validate(t: &Tuning) -> Result<(), ContentError> {
             "word-drift tiers must satisfy drift_t1 < drift_t2 < drift_t3".into(),
         ));
     }
-    // CB3 — probability/fraction fields must also be <= 1.0
-    if t.contact_chance > 1.0 {
-        return Err(ContentError::Invalid(
-            "contact_chance must be <= 1.0".into(),
-        ));
-    }
-    if t.contact_peer_share > 1.0 {
-        return Err(ContentError::Invalid(
-            "contact_peer_share must be <= 1.0".into(),
-        ));
-    }
-    if t.retreat_cargo_loss > 1.0 {
-        return Err(ContentError::Invalid(
-            "retreat_cargo_loss must be <= 1.0".into(),
-        ));
-    }
-    // CB2 — aliens & disposition
-    // Band thresholds: ordering assertion (not non-negative — they may be negative)
-    if !t.disp_hostile.is_finite() || !t.disp_neutral.is_finite() || !t.disp_curious.is_finite() {
-        return Err(ContentError::Invalid(
-            "disp_hostile/disp_neutral/disp_curious must all be finite".into(),
-        ));
-    }
+    // CB2 — disposition band ordering
     if !(t.disp_hostile < t.disp_neutral && t.disp_neutral < t.disp_curious) {
         return Err(ContentError::Invalid(
             "disposition bands must satisfy disp_hostile < disp_neutral < disp_curious".into(),
         ));
-    }
-    // Positive-magnitude fields: finite >= 0
-    for (name, v) in [
-        ("parley_shift", t.parley_shift),
-        ("gift_shift", t.gift_shift),
-        ("gift_cost", t.gift_cost),
-        ("trade_give", t.trade_give),
-        ("trade_get", t.trade_get),
-        ("trade_disp_shift", t.trade_disp_shift),
-        ("observe_data", t.observe_data),
-        ("observe_shift", t.observe_shift),
-        ("harvest_fauna_yield", t.harvest_fauna_yield),
-        ("fauna_hp", t.fauna_hp),
-        ("fauna_atk", t.fauna_atk),
-        ("fauna_def", t.fauna_def),
-        ("peer_hp", t.peer_hp),
-        ("peer_atk", t.peer_atk),
-        ("peer_def", t.peer_def),
-        ("peer_gear_mirror", t.peer_gear_mirror),
-        ("peer_salvage", t.peer_salvage),
-        ("fauna_salvage", t.fauna_salvage),
-        ("disp_spread", t.disp_spread),
-        ("peace_band", t.peace_band),
-    ] {
-        if !v.is_finite() || v < 0.0 {
-            return Err(ContentError::Invalid(format!("{name} must be finite >= 0")));
-        }
     }
     Ok(())
 }
@@ -409,6 +364,36 @@ pub fn load_jobs() -> Result<JobRegistry, ContentError> {
     let jobs: Vec<sim::job::Job> =
         ron::from_str(JOBS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
     let reg = JobRegistry(jobs);
+    validate_jobs(&reg)?;
+    Ok(reg)
+}
+
+fn validate_jobs(reg: &JobRegistry) -> Result<(), ContentError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for j in reg.iter() {
+        if !seen.insert(j.id) {
+            return Err(ContentError::Invalid(format!(
+                "jobs.ron: duplicate id {:?}",
+                j.id
+            )));
+        }
+    }
+    for j in reg.iter() {
+        if !j.power_draw.is_finite() || j.power_draw < 0.0 {
+            return Err(ContentError::Invalid(format!(
+                "{:?}: power_draw must be finite >= 0",
+                j.id
+            )));
+        }
+        for (label, list) in [("inputs", &j.recipe.inputs), ("outputs", &j.recipe.outputs)] {
+            if list.iter().any(|&(_, a)| !a.is_finite() || a < 0.0) {
+                return Err(ContentError::Invalid(format!(
+                    "{:?}: recipe {label} amounts must be finite >= 0",
+                    j.id
+                )));
+            }
+        }
+    }
     for want in [
         JobId::Salvager,
         JobId::Refiner,
@@ -421,21 +406,27 @@ pub fn load_jobs() -> Result<JobRegistry, ContentError> {
             return Err(ContentError::Invalid(format!("jobs.ron missing {want:?}")));
         }
     }
-    for j in reg.iter() {
-        if !j.power_draw.is_finite() || j.power_draw < 0.0 {
-            return Err(ContentError::Invalid(format!(
-                "{:?}: power_draw must be finite >= 0",
-                j.id
-            )));
-        }
-    }
-    Ok(reg)
+    Ok(())
 }
 
 pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
     let mods: Vec<sim::module::Module> =
         ron::from_str(MODULES_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
     let reg = ModuleRegistry(mods);
+    validate_modules(&reg)?;
+    Ok(reg)
+}
+
+fn validate_modules(reg: &ModuleRegistry) -> Result<(), ContentError> {
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for m in reg.iter() {
+        if !seen_ids.insert(m.id) {
+            return Err(ContentError::Invalid(format!(
+                "modules.ron: duplicate id {:?}",
+                m.id
+            )));
+        }
+    }
     for want in [
         ModuleId::Refinery,
         ModuleId::Fabricator,
@@ -487,13 +478,27 @@ pub fn load_modules() -> Result<ModuleRegistry, ContentError> {
             }
         }
     }
-    Ok(reg)
+    Ok(())
 }
 
 pub fn load_techs() -> Result<TechRegistry, ContentError> {
     let techs: Vec<sim::research::Tech> =
         ron::from_str(TECHS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
     let reg = TechRegistry(techs);
+    validate_techs(&reg)?;
+    Ok(reg)
+}
+
+fn validate_techs(reg: &TechRegistry) -> Result<(), ContentError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for t in reg.iter() {
+        if !seen.insert(t.id) {
+            return Err(ContentError::Invalid(format!(
+                "techs.ron: duplicate id {:?}",
+                t.id
+            )));
+        }
+    }
     for want in [
         TechId::CoreTuning,
         TechId::ContainmentFields,
@@ -572,23 +577,39 @@ pub fn load_techs() -> Result<TechRegistry, ContentError> {
     let mut visiting = std::collections::BTreeSet::new();
     let mut done = std::collections::BTreeSet::new();
     for t in reg.iter() {
-        if has_cycle(&reg, t.id, &mut visiting, &mut done) {
+        if has_cycle(reg, t.id, &mut visiting, &mut done) {
             return Err(ContentError::Invalid(format!(
                 "tech requires graph has a cycle at {:?}",
                 t.id
             )));
         }
     }
-    Ok(reg)
+    Ok(())
 }
 
 pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
     let origins: Vec<OriginDef> =
         ron::from_str(ORIGINS_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    validate_origins(&origins)?;
+    Ok(origins)
+}
+
+fn validate_origins(origins: &[OriginDef]) -> Result<(), ContentError> {
     if origins.is_empty() {
         return Err(ContentError::Invalid("no origins defined".into()));
     }
-    for o in &origins {
+    // Origin has no Ord/Hash; a linear scan over <=3 variants is fine.
+    let mut seen: Vec<sim::origin::Origin> = Vec::new();
+    for o in origins {
+        if seen.contains(&o.id) {
+            return Err(ContentError::Invalid(format!(
+                "origins.ron: duplicate id {:?}",
+                o.id
+            )));
+        }
+        seen.push(o.id);
+    }
+    for o in origins {
         if !(o.start.reactor_capacity.is_finite() && o.start.reactor_capacity > 0.0) {
             return Err(ContentError::Invalid(format!(
                 "{:?}: reactor_capacity must be finite > 0",
@@ -611,10 +632,11 @@ pub fn load_origins() -> Result<Vec<OriginDef>, ContentError> {
             )));
         }
     }
-    Ok(origins)
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BiomeDef {
     pub biome: Biome,
     pub blurb: String,
@@ -623,6 +645,22 @@ pub struct BiomeDef {
 pub fn load_biomes() -> Result<Vec<BiomeDef>, ContentError> {
     let defs: Vec<BiomeDef> =
         ron::from_str(BIOMES_RON).map_err(|e| ContentError::Parse(e.to_string()))?;
+    validate_biomes(&defs)?;
+    Ok(defs)
+}
+
+fn validate_biomes(defs: &[BiomeDef]) -> Result<(), ContentError> {
+    // Biome has no Ord/Hash; a linear scan over 7 variants is fine.
+    let mut seen: Vec<Biome> = Vec::new();
+    for d in defs {
+        if seen.contains(&d.biome) {
+            return Err(ContentError::Invalid(format!(
+                "biomes.ron: duplicate biome {:?}",
+                d.biome
+            )));
+        }
+        seen.push(d.biome);
+    }
     for want in [
         Biome::Frozen,
         Biome::Toxic,
@@ -642,7 +680,7 @@ pub fn load_biomes() -> Result<Vec<BiomeDef>, ContentError> {
             )));
         }
     }
-    Ok(defs)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -981,5 +1019,153 @@ mod tests {
         assert_eq!(t.drift_t1, 30.0);
         assert_eq!(t.drift_t2, 60.0);
         assert_eq!(t.drift_t3, 100.0);
+    }
+
+    #[test]
+    fn misspelled_key_is_a_parse_error() {
+        // `require_flag` (missing the s) must be a hard parse error via
+        // deny_unknown_fields — not a silently-defaulted `requires_flag: None`,
+        // which would ship a gated module ungated.
+        let bad = r#"[(
+            id: Armory,
+            name: "Armory",
+            description: "d",
+            tier: 1,
+            cost: [],
+            cost_scaling: 1.0,
+            repeatable: false,
+            requires_modules: [],
+            require_flag: Some(CombatDoctrineKnown),
+            unlocks: (),
+        )]"#;
+        assert!(ron::from_str::<Vec<sim::module::Module>>(bad).is_err());
+        // Control: the correctly-spelled key parses.
+        let good = bad.replace("require_flag:", "requires_flag:");
+        assert!(ron::from_str::<Vec<sim::module::Module>>(&good).is_ok());
+    }
+
+    fn invalid_msg(r: Result<(), ContentError>) -> String {
+        match r.unwrap_err() {
+            ContentError::Invalid(m) => m,
+            ContentError::Parse(m) => panic!("expected Invalid, got Parse({m})"),
+        }
+    }
+
+    fn sample_job() -> sim::job::Job {
+        sim::job::Job {
+            id: sim::job::JobId::Salvager,
+            name: "Salvager".into(),
+            gated_by: None,
+            recipe: sim::job::Recipe {
+                inputs: vec![],
+                outputs: vec![(sim::resources::ResourceKind::Scrap, 1.0)],
+            },
+            power_draw: 0.0,
+            default_priority: 0,
+        }
+    }
+
+    fn sample_module() -> sim::module::Module {
+        sim::module::Module {
+            id: sim::module::ModuleId::Refinery,
+            name: "Refinery".into(),
+            description: "d".into(),
+            tier: 1,
+            cost: vec![],
+            cost_scaling: 1.0,
+            repeatable: false,
+            requires_modules: vec![],
+            requires_flag: None,
+            unlocks: Default::default(),
+        }
+    }
+
+    fn sample_tech() -> sim::research::Tech {
+        sim::research::Tech {
+            id: sim::research::TechId::CoreTuning,
+            name: "Core Tuning".into(),
+            blurb: "b".into(),
+            data_cost: 5.0,
+            research_ticks: 30,
+            requires: vec![],
+            grant: sim::research::Grant::ReactorMaxOutput(2.0),
+            lore: "l".into(),
+        }
+    }
+
+    #[test]
+    fn duplicate_ids_are_rejected_in_every_registry() {
+        // Jobs
+        let j = sample_job();
+        let msg = invalid_msg(validate_jobs(&sim::job::JobRegistry(vec![j.clone(), j])));
+        assert!(msg.contains("duplicate"), "{msg}");
+        // Modules
+        let m = sample_module();
+        let msg = invalid_msg(validate_modules(&sim::module::ModuleRegistry(vec![
+            m.clone(),
+            m,
+        ])));
+        assert!(msg.contains("duplicate"), "{msg}");
+        // Techs
+        let tc = sample_tech();
+        let msg = invalid_msg(validate_techs(&sim::research::TechRegistry(vec![
+            tc.clone(),
+            tc,
+        ])));
+        assert!(msg.contains("duplicate"), "{msg}");
+        // Origins
+        let origins = load_origins().unwrap();
+        let mut dup = origins.clone();
+        dup.push(origins[0].clone());
+        let msg = invalid_msg(validate_origins(&dup));
+        assert!(msg.contains("duplicate"), "{msg}");
+        // Biomes
+        let dup = [
+            BiomeDef {
+                biome: Biome::Frozen,
+                blurb: "a".into(),
+            },
+            BiomeDef {
+                biome: Biome::Frozen,
+                blurb: "b".into(),
+            },
+        ];
+        let msg = invalid_msg(validate_biomes(&dup));
+        assert!(msg.contains("duplicate"), "{msg}");
+    }
+
+    #[test]
+    fn bad_recipe_amounts_are_rejected() {
+        // Negative output
+        let mut j = sample_job();
+        j.recipe.outputs[0].1 = -1.0;
+        let msg = invalid_msg(validate_jobs(&sim::job::JobRegistry(vec![j])));
+        assert!(msg.contains("recipe outputs"), "{msg}");
+        // NaN input
+        let mut j = sample_job();
+        j.recipe.inputs = vec![(sim::resources::ResourceKind::Alloy, f64::NAN)];
+        let msg = invalid_msg(validate_jobs(&sim::job::JobRegistry(vec![j])));
+        assert!(msg.contains("recipe inputs"), "{msg}");
+    }
+
+    #[test]
+    fn validates_new_tuning_fields() {
+        // fauna_start_disp / peer_start_disp: negatives legal, non-finite not.
+        let ok = Tuning {
+            fauna_start_disp: -25.0,
+            peer_start_disp: -5.0,
+            ..Tuning::default()
+        };
+        assert!(validate(&ok).is_ok());
+        let bad = Tuning {
+            fauna_start_disp: f64::NAN,
+            ..Tuning::default()
+        };
+        assert!(matches!(validate(&bad), Err(ContentError::Invalid(_))));
+        let bad = Tuning {
+            peer_start_disp: f64::INFINITY,
+            ..Tuning::default()
+        };
+        assert!(matches!(validate(&bad), Err(ContentError::Invalid(_))));
     }
 }

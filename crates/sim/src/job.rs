@@ -16,12 +16,14 @@ pub enum JobId {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Recipe {
     pub inputs: Vec<(ResourceKind, f64)>,
     pub outputs: Vec<(ResourceKind, f64)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Job {
     pub id: JobId,
     pub name: String,
