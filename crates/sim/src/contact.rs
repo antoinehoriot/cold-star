@@ -1,7 +1,7 @@
 //! Ship-vs-ship contacts. A vessel met on arrival in a system, resolved by
 //! negotiation (reusing CB2 disposition) or a ship fight (reusing CB1 Combat).
 //! Pure: the contact roll + disposition are seeded; combat is tuning-derived.
-use crate::combat::{Combat, EnemyKind, SquadStats, Stance};
+use crate::combat::{Combat, EnemyKind, SquadStats, Stance, scaled_enemy_stats};
 use crate::config::Tuning;
 use crate::galaxy::SystemId;
 use crate::rng::{Rng, hash};
@@ -61,29 +61,43 @@ pub fn ship_stats(ship: &Ship, stance: Stance, t: &Tuning) -> SquadStats {
 }
 
 pub fn peer_ship_stats(depth: u32, grad: f64, ship: &Ship, t: &Tuning) -> Combat {
-    let m = (1.0 + depth as f64 * t.combat_depth_mult) * grad;
     let mirror = 1.0 + (ship.ship_weapon_tier + ship.hull_plating_tier) as f64 * t.peer_ship_mirror;
-    Combat {
-        enemy_hp: t.peer_ship_hp * m * mirror,
-        enemy_atk: t.peer_ship_atk * m * mirror,
-        enemy_def: t.peer_ship_def * m * mirror,
-        enemy_speed: t.ship_enemy_speed,
-        stance: Stance::Aggressive,
-        shield_ticks: 0,
-        kind: EnemyKind::Peer,
-    }
+    scaled_enemy_stats(
+        depth,
+        grad,
+        mirror,
+        t.peer_ship_hp,
+        t.peer_ship_atk,
+        t.peer_ship_def,
+        t.ship_enemy_speed,
+        Stance::Aggressive,
+        EnemyKind::Peer,
+        t,
+    )
 }
 
 pub fn remnant_ship_stats(depth: u32, grad: f64, t: &Tuning) -> Combat {
-    let m = (1.0 + depth as f64 * t.combat_depth_mult) * grad;
-    Combat {
-        enemy_hp: t.remnant_ship_hp * m,
-        enemy_atk: t.remnant_ship_atk * m,
-        enemy_def: t.remnant_ship_def * m,
-        enemy_speed: t.ship_enemy_speed,
-        stance: Stance::Aggressive,
-        shield_ticks: 0,
-        kind: EnemyKind::Remnant,
+    scaled_enemy_stats(
+        depth,
+        grad,
+        1.0,
+        t.remnant_ship_hp,
+        t.remnant_ship_atk,
+        t.remnant_ship_def,
+        t.ship_enemy_speed,
+        Stance::Aggressive,
+        EnemyKind::Remnant,
+        t,
+    )
+}
+
+/// Enemy ship combat block for a contact of `kind`. Depth is always 0 for ship
+/// contacts — distance scaling is already baked into `grad`. Shared by the
+/// `AttackShip` action and hostile-contact opening (`maybe_start_contact`).
+pub(crate) fn ship_combat(kind: ShipKind, grad: f64, ship: &Ship, t: &Tuning) -> Combat {
+    match kind {
+        ShipKind::Peer => peer_ship_stats(0, grad, ship, t),
+        ShipKind::Remnant => remnant_ship_stats(0, grad, t),
     }
 }
 

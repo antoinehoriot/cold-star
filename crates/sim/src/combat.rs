@@ -26,17 +26,48 @@ pub struct Combat {
     pub kind: EnemyKind,
 }
 
-pub fn remnant_stats(depth: u32, grad: f64, t: &Tuning) -> Combat {
+/// Shared enemy constructor: applies the depth/frontier scaling
+/// `m = (1 + depth * combat_depth_mult) * grad`, then `mirror`, to the base
+/// `(hp, atk, def)`. Pass `mirror = 1.0` for non-mirroring enemies (exact
+/// identity in IEEE arithmetic). All five enemy-stat fns route through this.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scaled_enemy_stats(
+    depth: u32,
+    grad: f64,
+    mirror: f64,
+    hp: f64,
+    atk: f64,
+    def: f64,
+    speed: f64,
+    stance: Stance,
+    kind: EnemyKind,
+    t: &Tuning,
+) -> Combat {
     let m = (1.0 + depth as f64 * t.combat_depth_mult) * grad;
     Combat {
-        enemy_hp: t.remnant_hp * m,
-        enemy_atk: t.remnant_atk * m,
-        enemy_def: t.remnant_def * m,
-        enemy_speed: t.remnant_speed,
-        stance: Stance::Defensive,
+        enemy_hp: hp * m * mirror,
+        enemy_atk: atk * m * mirror,
+        enemy_def: def * m * mirror,
+        enemy_speed: speed,
+        stance,
         shield_ticks: 0,
-        kind: EnemyKind::Remnant,
+        kind,
     }
+}
+
+pub fn remnant_stats(depth: u32, grad: f64, t: &Tuning) -> Combat {
+    scaled_enemy_stats(
+        depth,
+        grad,
+        1.0,
+        t.remnant_hp,
+        t.remnant_atk,
+        t.remnant_def,
+        t.remnant_speed,
+        Stance::Defensive,
+        EnemyKind::Remnant,
+        t,
+    )
 }
 
 pub struct SquadStats {

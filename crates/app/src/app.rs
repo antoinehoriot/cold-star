@@ -30,6 +30,34 @@ use crate::vm::{
 
 const REPO_URL: &str = "https://github.com/antoinehoriot/cold-star";
 
+/// Toggle a combat stance: Aggressive flips to Defensive; anything else
+/// (Defensive, Neutral, or no combat yet) flips to Aggressive.
+fn toggle_stance(current: Option<sim::combat::Stance>) -> sim::combat::Stance {
+    match current {
+        Some(sim::combat::Stance::Aggressive) => sim::combat::Stance::Defensive,
+        _ => sim::combat::Stance::Aggressive,
+    }
+}
+
+/// Consumable kinds with their UI labels and current station stock, in display order.
+fn consumable_rows(gs: &GameState) -> Vec<(sim::gear::ConsumableKind, String, u32)> {
+    use sim::gear::ConsumableKind::*;
+    [
+        (MedGel, "Med-gel"),
+        (Grenade, "Grenade"),
+        (Shield, "Shield"),
+    ]
+    .iter()
+    .map(|(k, label)| {
+        (
+            *k,
+            label.to_string(),
+            gs.consumables.get(k).copied().unwrap_or(0),
+        )
+    })
+    .collect()
+}
+
 #[component]
 pub fn App() -> Element {
     // Content is embedded at compile time: a load failure is a build defect, and
@@ -548,47 +576,17 @@ fn Console(
                     can_harvest: !is_peer,
                 }
             }),
-            consumables: {
-                use sim::gear::ConsumableKind::*;
-                [
-                    (MedGel, "Med-gel"),
-                    (Grenade, "Grenade"),
-                    (Shield, "Shield"),
-                ]
-                .iter()
-                .map(|(k, label)| {
-                    (
-                        *k,
-                        label.to_string(),
-                        gs.consumables.get(k).copied().unwrap_or(0),
-                    )
-                })
-                .collect()
-            },
+            consumables: consumable_rows(gs),
         }
     });
     let armory_built = gs.built_count(sim::module::ModuleId::Armory) > 0;
     let loadout_vm = if armory_built {
-        use sim::gear::ConsumableKind::*;
         Some(LoadoutVM {
             away_crew: gs.expedition.away_team.crew,
             idle: gs.crew.idle(),
             weapon_tier: gs.gear.weapon_tier,
             armor_tier: gs.gear.armor_tier,
-            consumables: [
-                (MedGel, "Med-gel"),
-                (Grenade, "Grenade"),
-                (Shield, "Shield"),
-            ]
-            .iter()
-            .map(|(k, label)| {
-                (
-                    *k,
-                    label.to_string(),
-                    gs.consumables.get(k).copied().unwrap_or(0),
-                )
-            })
-            .collect(),
+            consumables: consumable_rows(gs),
         })
     } else {
         None
@@ -779,14 +777,7 @@ fn Console(
         if let Some(egvm) = endgame_vm.clone() {
             EndgamePanel {
                 vm: egvm,
-                on_choose: move |ending| {
-                    let t = tuning.read().clone();
-                    let j = JobRegistry(jobs.read().clone());
-                    let m = ModuleRegistry(modules.read().clone());
-                    let tc = TechRegistry(techs.read().clone());
-                    let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                    if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ChooseEnding(ending)); }
-                },
+                on_choose: move |ending| act(Action::ChooseEnding(ending)),
                 on_restart: move |_| { state.set(None); },
             }
         } else {
@@ -863,198 +854,48 @@ fn Console(
                     SurfaceView {
                         vm,
                         tier,
-                        on_move: move |node| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::MoveToNode(node)); }
-                        },
-                        on_harvest: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HarvestLife); }
-                        },
-                        on_leave: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::LeaveLife); }
-                        },
-                        on_extract: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Extract); }
-                        },
-                        on_use_consumable: move |kind| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UseConsumable(kind)); }
-                        },
+                        on_move: move |node| act(Action::MoveToNode(node)),
+                        on_harvest: move |_| act(Action::HarvestLife),
+                        on_leave: move |_| act(Action::LeaveLife),
+                        on_extract: move |_| act(Action::Extract),
+                        on_use_consumable: move |kind| act(Action::UseConsumable(kind)),
                         on_stance: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() {
-                                let next = match gs.expedition.landing.as_ref().and_then(|l| l.combat.as_ref()).map(|c| c.stance) {
-                                    Some(sim::combat::Stance::Aggressive) => sim::combat::Stance::Defensive,
-                                    _ => sim::combat::Stance::Aggressive,
-                                };
-                                let _ = gs.apply(&world, Action::SetStance(next));
-                            }
+                            let cur = state
+                                .read()
+                                .as_ref()
+                                .and_then(|gs| gs.expedition.landing.as_ref())
+                                .and_then(|l| l.combat.as_ref())
+                                .map(|c| c.stance);
+                            act(Action::SetStance(toggle_stance(cur)));
                         },
-                        on_flee: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Flee); }
-                        },
-                        on_parley: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Parley); }
-                        },
-                        on_trade: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Trade); }
-                        },
-                        on_gift: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Gift); }
-                        },
-                        on_avoid: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Avoid); }
-                        },
-                        on_observe: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Observe); }
-                        },
-                        on_harvest_fauna: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Harvest); }
-                        },
-                        on_attack_alien: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::AttackAlien); }
-                        },
+                        on_flee: move |_| act(Action::Flee),
+                        on_parley: move |_| act(Action::Parley),
+                        on_trade: move |_| act(Action::Trade),
+                        on_gift: move |_| act(Action::Gift),
+                        on_avoid: move |_| act(Action::Avoid),
+                        on_observe: move |_| act(Action::Observe),
+                        on_harvest_fauna: move |_| act(Action::Harvest),
+                        on_attack_alien: move |_| act(Action::AttackAlien),
                     }
                 } else if let Some(cvm) = contact_vm.clone() {
                     ContactPanel {
                         vm: cvm,
-                        on_parley: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailParley); }
-                        },
-                        on_trade: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailTrade); }
-                        },
-                        on_gift: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailGift); }
-                        },
-                        on_avoid: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::HailAvoid); }
-                        },
-                        on_attack: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::AttackShip); }
-                        },
-                        on_flee: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ShipFlee); }
-                        },
+                        on_parley: move |_| act(Action::HailParley),
+                        on_trade: move |_| act(Action::HailTrade),
+                        on_gift: move |_| act(Action::HailGift),
+                        on_avoid: move |_| act(Action::HailAvoid),
+                        on_attack: move |_| act(Action::AttackShip),
+                        on_flee: move |_| act(Action::ShipFlee),
                         on_stance: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() {
-                                let next = match gs.expedition.contact.as_ref().and_then(|c| c.combat.as_ref()).map(|c| c.stance) {
-                                    Some(sim::combat::Stance::Aggressive) => sim::combat::Stance::Defensive,
-                                    _ => sim::combat::Stance::Aggressive,
-                                };
-                                let _ = gs.apply(&world, Action::SetShipStance(next));
-                            }
+                            let cur = state
+                                .read()
+                                .as_ref()
+                                .and_then(|gs| gs.expedition.contact.as_ref())
+                                .and_then(|c| c.combat.as_ref())
+                                .map(|c| c.stance);
+                            act(Action::SetShipStance(toggle_stance(cur)));
                         },
-                        on_repair: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UseRepairDrone); }
-                        },
+                        on_repair: move |_| act(Action::UseRepairDrone),
                     }
                 } else {
                     NavigationPanel {
@@ -1071,54 +912,12 @@ fn Console(
                         can_upgrade_drive,
                         current: loc,
                         rows: nav_rows.clone(),
-                        on_scan: move |id| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ScanSystem(id)); }
-                        },
-                        on_jump: move |id| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Jump(id)); }
-                        },
-                        on_resolve: move |(id, idx)| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::ResolveSite(id, idx)); }
-                        },
-                        on_scavenge: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Scavenge); }
-                        },
-                        on_upgrade: move |_| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeDrive); }
-                        },
-                        on_land: move |idx| {
-                            let t = tuning.read().clone();
-                            let j = JobRegistry(jobs.read().clone());
-                            let m = ModuleRegistry(modules.read().clone());
-                            let tc = TechRegistry(techs.read().clone());
-                            let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                            if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::Land(idx)); }
-                        },
+                        on_scan: move |id| act(Action::ScanSystem(id)),
+                        on_jump: move |id| act(Action::Jump(id)),
+                        on_resolve: move |(id, idx)| act(Action::ResolveSite(id, idx)),
+                        on_scavenge: move |_| act(Action::Scavenge),
+                        on_upgrade: move |_| act(Action::UpgradeDrive),
+                        on_land: move |idx| act(Action::Land(idx)),
                     }
                 }
             }
@@ -1153,62 +952,26 @@ fn Console(
                             starving,
                             starving_label: starving_label.clone(),
                             rows: job_rows.clone(),
-                            on_assign: move |(job, delta)| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() {
-                                    let _ = gs.apply(&world, Action::AssignCrew { job, delta });
-                                }
-                            },
+                            on_assign: move |(job, delta)| act(Action::AssignCrew { job, delta }),
                         }
                     }
                     if build_menu_unlocked {
                         BuildMenu {
                             rows: build_rows.clone(),
-                            on_build: move |id| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() {
-                                    let _ = gs.apply(&world, Action::Build(id));
-                                }
-                            },
+                            on_build: move |id| act(Action::Build(id)),
                         }
                     }
                     if research_unlocked {
                         ResearchPanel {
                             active: research_active.clone(),
                             rows: research_rows.clone(),
-                            on_start: move |id| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() {
-                                    let _ = gs.apply(&world, Action::StartResearch(id));
-                                }
-                            },
+                            on_start: move |id| act(Action::StartResearch(id)),
                         }
                     }
                     if power_visible {
                         PriorityPanel {
                             rows: prio_rows.clone(),
-                            on_move: move |(consumer, up)| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() {
-                                    let _ = gs.apply(&world, Action::SetPriority { consumer, up });
-                                }
-                            },
+                            on_move: move |(consumer, up)| act(Action::SetPriority { consumer, up }),
                         }
                     }
                     if let Some(vm) = loadout_vm.clone() {
@@ -1216,67 +979,18 @@ fn Console(
                             vm,
                             tier,
                             can_set_crew,
-                            on_set_crew: move |delta| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::SetAwayCrew { delta }); }
-                            },
-                            on_upgrade_weapon: move |_| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeWeapon); }
-                            },
-                            on_upgrade_armor: move |_| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeArmor); }
-                            },
-                            on_craft: move |kind| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::CraftConsumable(kind)); }
-                            },
+                            on_set_crew: move |delta| act(Action::SetAwayCrew { delta }),
+                            on_upgrade_weapon: move |_| act(Action::UpgradeWeapon),
+                            on_upgrade_armor: move |_| act(Action::UpgradeArmor),
+                            on_craft: move |kind| act(Action::CraftConsumable(kind)),
                         }
                     }
                     if let Some(vm) = munitions_vm.clone() {
                         ShipMunitionsPanel {
                             vm,
-                            on_upgrade_weapon: move |_| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeShipWeapon); }
-                            },
-                            on_upgrade_plating: move |_| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::UpgradeHullPlating); }
-                            },
-                            on_craft_drone: move |_| {
-                                let t = tuning.read().clone();
-                                let j = JobRegistry(jobs.read().clone());
-                                let m = ModuleRegistry(modules.read().clone());
-                                let tc = TechRegistry(techs.read().clone());
-                                let world = World { tuning: &t, jobs: &j, modules: &m, techs: &tc };
-                                if let Some(gs) = state.write().as_mut() { let _ = gs.apply(&world, Action::CraftRepairDrone); }
-                            },
+                            on_upgrade_weapon: move |_| act(Action::UpgradeShipWeapon),
+                            on_upgrade_plating: move |_| act(Action::UpgradeHullPlating),
+                            on_craft_drone: move |_| act(Action::CraftRepairDrone),
                         }
                     }
                 }

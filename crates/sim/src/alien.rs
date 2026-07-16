@@ -1,6 +1,6 @@
 //! Aliens & disposition. Fauna + Peers, resolved through a dynamic disposition
 //! stat. Pure: dispositions/outcomes are seeded or tuning-driven (no resolve RNG).
-use crate::combat::{Combat, EnemyKind, Stance};
+use crate::combat::{Combat, EnemyKind, Stance, scaled_enemy_stats};
 use crate::config::Tuning;
 use crate::gear::Gear;
 use crate::rng::{Rng, hash};
@@ -51,31 +51,35 @@ pub fn starting_disposition(site_seed: u64, node: u32, kind: AlienKind, t: &Tuni
 }
 
 pub fn fauna_stats(depth: u32, grad: f64, t: &Tuning) -> Combat {
-    let m = (1.0 + depth as f64 * t.combat_depth_mult) * grad;
-    Combat {
-        enemy_hp: t.fauna_hp * m,
-        enemy_atk: t.fauna_atk * m,
-        enemy_def: t.fauna_def * m,
-        enemy_speed: t.remnant_speed,
-        stance: Stance::Defensive,
-        shield_ticks: 0,
-        kind: EnemyKind::Fauna,
-    }
+    scaled_enemy_stats(
+        depth,
+        grad,
+        1.0,
+        t.fauna_hp,
+        t.fauna_atk,
+        t.fauna_def,
+        t.remnant_speed,
+        Stance::Defensive,
+        EnemyKind::Fauna,
+        t,
+    )
 }
 
 /// A Peer's strength mirrors the player's own gear tier — they scaled as you did.
 pub fn peer_stats(depth: u32, grad: f64, gear: Gear, t: &Tuning) -> Combat {
-    let m = (1.0 + depth as f64 * t.combat_depth_mult) * grad;
     let mirror = 1.0 + (gear.weapon_tier + gear.armor_tier) as f64 * t.peer_gear_mirror;
-    Combat {
-        enemy_hp: t.peer_hp * m * mirror,
-        enemy_atk: t.peer_atk * m * mirror,
-        enemy_def: t.peer_def * m * mirror,
-        enemy_speed: t.remnant_speed,
-        stance: Stance::Defensive,
-        shield_ticks: 0,
-        kind: EnemyKind::Peer,
-    }
+    scaled_enemy_stats(
+        depth,
+        grad,
+        mirror,
+        t.peer_hp,
+        t.peer_atk,
+        t.peer_def,
+        t.remnant_speed,
+        Stance::Defensive,
+        EnemyKind::Peer,
+        t,
+    )
 }
 
 #[cfg(test)]

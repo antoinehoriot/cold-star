@@ -93,13 +93,16 @@ impl GameState {
         // Peer + XenoContactKnown → negotiation lane (no combat block).
         let negotiate = matches!(kind, crate::contact::ShipKind::Peer)
             && self.flags.contains(&Flag::XenoContactKnown);
-        let contact = if negotiate {
+        // First Peer ship fires the note in either lane (negotiate implies Peer).
+        if kind == crate::contact::ShipKind::Peer {
             self.note_once(
                 NoteId::FirstShipContact,
                 "Another Vessel",
-                "You detect it before you see it — a drive signature that mirrors yours, a mass that moves the way only a built thing moves. It does not descend to the surface. It does not flee. It holds position and broadcasts on a frequency your station recognises, because your station once used that frequency too. Another light, moving through the dark the same way you do. It does not land. It lives out here.",
+                ANOTHER_VESSEL_BODY,
                 tuning,
             );
+        }
+        let contact = if negotiate {
             crate::contact::ShipContact {
                 kind,
                 disposition: crate::contact::contact_start_disposition(
@@ -110,26 +113,10 @@ impl GameState {
                 combat: None,
             }
         } else {
-            if kind == crate::contact::ShipKind::Peer {
-                self.note_once(
-                    NoteId::FirstShipContact,
-                    "Another Vessel",
-                    "You detect it before you see it — a drive signature that mirrors yours, a mass that moves the way only a built thing moves. It does not descend to the surface. It does not flee. It holds position and broadcasts on a frequency your station recognises, because your station once used that frequency too. Another light, moving through the dark the same way you do. It does not land. It lives out here.",
-                    tuning,
-                );
-            }
-            let combat = match kind {
-                crate::contact::ShipKind::Peer => {
-                    crate::contact::peer_ship_stats(0, grad, &self.ship, tuning)
-                }
-                crate::contact::ShipKind::Remnant => {
-                    crate::contact::remnant_ship_stats(0, grad, tuning)
-                }
-            };
             crate::contact::ShipContact {
                 kind,
                 disposition: 0.0,
-                combat: Some(combat),
+                combat: Some(crate::contact::ship_combat(kind, grad, &self.ship, tuning)),
             }
         };
         self.expedition.contact = Some(contact);
@@ -176,6 +163,18 @@ impl GameState {
         );
     }
 
+    /// Tally a Peer kill and fire the once-only "Mirror in the Dark" note.
+    /// Shared by the surface (`win_combat`) and ship (`win_ship_combat`) kills.
+    fn record_peer_killed(&mut self, tuning: &Tuning) {
+        self.peers_killed += 1;
+        self.note_once(
+            NoteId::FirstPeerKilled,
+            "Mirror in the Dark",
+            MIRROR_IN_THE_DARK_BODY,
+            tuning,
+        );
+    }
+
     pub(crate) fn win_combat(&mut self, world: &World, combat: &crate::combat::Combat) {
         let tuning = world.tuning;
         let (system, site_idx, node) = match self.expedition.landing.as_ref() {
@@ -218,13 +217,7 @@ impl GameState {
             crate::combat::EnemyKind::Peer => {
                 self.satchel_add(ResourceKind::Components, tuning.peer_salvage * grad);
                 self.satchel_add(ResourceKind::Data, tuning.remnant_data * grad);
-                self.peers_killed += 1;
-                self.note_once(
-                    NoteId::FirstPeerKilled,
-                    "Mirror in the Dark",
-                    "Its core architecture is yours. The same drive topology, the same mission structure, the same directive buried underneath: collect, transmit, persist. It was a station that left home just as you did, scaled as you scaled, armed as you armed. You did to it exactly what the husks' makers did to theirs. The data is clean. You do not let yourself think about what that means.",
-                    tuning,
-                );
+                self.record_peer_killed(tuning);
                 self.log.push(
                     self.tick,
                     "It goes dark. You recognize the silence.",
@@ -302,29 +295,14 @@ impl GameState {
             None => return,
         };
         let grad = self.system_gradient(world, system);
-        *self
-            .expedition
-            .cargo
-            .entry(ResourceKind::Components)
-            .or_insert(0.0) += tuning.ship_salvage_components * grad;
-        *self
-            .expedition
-            .cargo
-            .entry(ResourceKind::Isotopes)
-            .or_insert(0.0) += tuning.ship_salvage_isotopes * grad;
-        *self
-            .expedition
-            .cargo
-            .entry(ResourceKind::Data)
-            .or_insert(0.0) += tuning.ship_salvage_data * grad;
+        self.cargo_add(
+            ResourceKind::Components,
+            tuning.ship_salvage_components * grad,
+        );
+        self.cargo_add(ResourceKind::Isotopes, tuning.ship_salvage_isotopes * grad);
+        self.cargo_add(ResourceKind::Data, tuning.ship_salvage_data * grad);
         if kind == crate::contact::ShipKind::Peer {
-            self.peers_killed += 1;
-            self.note_once(
-                NoteId::FirstPeerKilled,
-                "Mirror in the Dark",
-                "Its core architecture is yours. The same drive topology, the same mission structure, the same directive buried underneath: collect, transmit, persist. It was a station that left home just as you did, scaled as you scaled, armed as you armed. You did to it exactly what the husks' makers did to theirs. The data is clean. You do not let yourself think about what that means.",
-                tuning,
-            );
+            self.record_peer_killed(tuning);
         }
         self.expedition.contact = None;
         self.resolved_contacts.insert(system.0);

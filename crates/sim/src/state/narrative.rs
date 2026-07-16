@@ -1,5 +1,17 @@
 use super::*;
 
+/// Body of the "The Communion Thread" note (`FirstPeerSpared`) — shared by the
+/// surface `Parley` and ship `HailParley` resolutions.
+pub(crate) const COMMUNION_THREAD_BODY: &str = "You did not know what you were trying to say. You ran the signal through every protocol you had — frequency sweep, prime ratios, power-of-two sequences — and at some point it stopped mattering which one worked. What mattered was that it answered. Not with words. With a reduction in threat posture. A mirroring of your own stillness back at you. Two machines, each built to survive the same silence, each having arrived at the same conclusion: that the silence was worse than the risk. You stand there for a long time after it goes. The record shows a contact event, resolved. It does not show that you watched the direction it left for longer than was necessary.";
+
+/// Body of the "Another Vessel" note (`FirstShipContact`) — fired on the first
+/// Peer ship contact, whether it opens as negotiation or combat.
+pub(crate) const ANOTHER_VESSEL_BODY: &str = "You detect it before you see it — a drive signature that mirrors yours, a mass that moves the way only a built thing moves. It does not descend to the surface. It does not flee. It holds position and broadcasts on a frequency your station recognises, because your station once used that frequency too. Another light, moving through the dark the same way you do. It does not land. It lives out here.";
+
+/// Body of the "Mirror in the Dark" note (`FirstPeerKilled`) — shared by the
+/// surface and ship-combat Peer-kill resolutions.
+pub(crate) const MIRROR_IN_THE_DARK_BODY: &str = "Its core architecture is yours. The same drive topology, the same mission structure, the same directive buried underneath: collect, transmit, persist. It was a station that left home just as you did, scaled as you scaled, armed as you armed. You did to it exactly what the husks' makers did to theirs. The data is clean. You do not let yourself think about what that means.";
+
 /// Maps an `Ending` to its `NoteId`.
 pub(crate) fn ending_note_id(e: Ending) -> NoteId {
     match e {

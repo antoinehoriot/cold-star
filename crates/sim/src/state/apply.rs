@@ -392,11 +392,7 @@ impl GameState {
                     return Err(Rejected("you are not on a surface"));
                 };
                 for (k, amt) in landing.satchel {
-                    let space = (self.ship.cargo - self.expedition.cargo_total()).max(0.0);
-                    let take = amt.min(space);
-                    if take > 0.0 {
-                        *self.expedition.cargo.entry(k).or_insert(0.0) += take;
-                    }
+                    self.cargo_add_clamped(k, amt);
                 }
                 self.log.push(
                     self.tick,
@@ -642,13 +638,7 @@ impl GameState {
                         l.alien = None;
                     }
                     self.mark_resolved(system, site_idx, node);
-                    self.peers_spared += 1;
-                    self.note_once(
-                        NoteId::FirstPeerSpared,
-                        "The Communion Thread",
-                        "You did not know what you were trying to say. You ran the signal through every protocol you had — frequency sweep, prime ratios, power-of-two sequences — and at some point it stopped mattering which one worked. What mattered was that it answered. Not with words. With a reduction in threat posture. A mirroring of your own stillness back at you. Two machines, each built to survive the same silence, each having arrived at the same conclusion: that the silence was worse than the risk. You stand there for a long time after it goes. The record shows a contact event, resolved. It does not show that you watched the direction it left for longer than was necessary.",
-                        tuning,
-                    );
+                    self.record_peer_spared(tuning);
                     self.log
                         .push(self.tick, "It moves away. You let it.", tuning.log_capacity);
                 }
@@ -705,30 +695,12 @@ impl GameState {
                 if l.alien.is_none() {
                     return Err(Rejected("nothing there to gift"));
                 }
-                let have = self
-                    .expedition
-                    .cargo
-                    .get(&ResourceKind::Components)
-                    .copied()
-                    .unwrap_or(0.0);
-                if have < tuning.gift_cost {
-                    return Err(Rejected("not enough Components to gift"));
-                }
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Components)
-                    .or_insert(0.0) -= tuning.gift_cost;
+                self.gift_exchange(tuning)?;
                 if let Some(l) = self.expedition.landing.as_mut()
                     && let Some(a) = l.alien.as_mut()
                 {
                     a.disposition += tuning.gift_shift;
                 }
-                self.log.push(
-                    self.tick,
-                    "You set the materials down and step back. A gesture older than language.",
-                    tuning.log_capacity,
-                );
                 Ok(())
             }
             Action::Trade => {
@@ -746,40 +718,12 @@ impl GameState {
                 if b == crate::alien::Band::Hostile || b == crate::alien::Band::Fearful {
                     return Err(Rejected("they will not deal"));
                 }
-                let have = self
-                    .expedition
-                    .cargo
-                    .get(&ResourceKind::Components)
-                    .copied()
-                    .unwrap_or(0.0);
-                if have < tuning.trade_give {
-                    return Err(Rejected("not enough Components to trade"));
-                }
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Components)
-                    .or_insert(0.0) -= tuning.trade_give;
-                let gain = if b == crate::alien::Band::Curious {
-                    tuning.trade_get * CURIOUS_TRADE_BONUS
-                } else {
-                    tuning.trade_get
-                };
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Isotopes)
-                    .or_insert(0.0) += gain;
+                self.trade_exchange(b, tuning)?;
                 if let Some(l) = self.expedition.landing.as_mut()
                     && let Some(a) = l.alien.as_mut()
                 {
                     a.disposition += tuning.trade_disp_shift;
                 }
-                self.log.push(
-                    self.tick,
-                    "You exchange what you have for what they carry. Neither of you speaks.",
-                    tuning.log_capacity,
-                );
                 Ok(())
             }
             Action::Harvest => {
@@ -901,11 +845,7 @@ impl GameState {
                 if let Some(c) = self.expedition.contact.as_mut() {
                     c.disposition = new_disp;
                 }
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Data)
-                    .or_insert(0.0) += tuning.observe_data;
+                self.cargo_add(ResourceKind::Data, tuning.observe_data);
                 self.log.push(
                     self.tick,
                     "You signal intent. It considers you.",
@@ -914,13 +854,7 @@ impl GameState {
                 if new_disp >= tuning.peace_band {
                     self.expedition.contact = None;
                     self.resolved_contacts.insert(location.0);
-                    self.peers_spared += 1;
-                    self.note_once(
-                        NoteId::FirstPeerSpared,
-                        "The Communion Thread",
-                        "You did not know what you were trying to say. You ran the signal through every protocol you had — frequency sweep, prime ratios, power-of-two sequences — and at some point it stopped mattering which one worked. What mattered was that it answered. Not with words. With a reduction in threat posture. A mirroring of your own stillness back at you. Two machines, each built to survive the same silence, each having arrived at the same conclusion: that the silence was worse than the risk. You stand there for a long time after it goes. The record shows a contact event, resolved. It does not show that you watched the direction it left for longer than was necessary.",
-                        tuning,
-                    );
+                    self.record_peer_spared(tuning);
                     self.log.push(
                         self.tick,
                         "They stand down — you pass.",
@@ -944,38 +878,10 @@ impl GameState {
                 if b == crate::alien::Band::Hostile || b == crate::alien::Band::Fearful {
                     return Err(Rejected("they will not deal"));
                 }
-                let have = self
-                    .expedition
-                    .cargo
-                    .get(&ResourceKind::Components)
-                    .copied()
-                    .unwrap_or(0.0);
-                if have < tuning.trade_give {
-                    return Err(Rejected("not enough Components to trade"));
-                }
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Components)
-                    .or_insert(0.0) -= tuning.trade_give;
-                let gain = if b == crate::alien::Band::Curious {
-                    tuning.trade_get * CURIOUS_TRADE_BONUS
-                } else {
-                    tuning.trade_get
-                };
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Isotopes)
-                    .or_insert(0.0) += gain;
+                self.trade_exchange(b, tuning)?;
                 if let Some(c) = self.expedition.contact.as_mut() {
                     c.disposition += tuning.trade_disp_shift;
                 }
-                self.log.push(
-                    self.tick,
-                    "You exchange what you have for what they carry. Neither of you speaks.",
-                    tuning.log_capacity,
-                );
                 Ok(())
             }
             Action::HailGift => {
@@ -989,28 +895,10 @@ impl GameState {
                 if contact.kind != crate::contact::ShipKind::Peer {
                     return Err(Rejected("they will not accept the gesture"));
                 }
-                let have = self
-                    .expedition
-                    .cargo
-                    .get(&ResourceKind::Components)
-                    .copied()
-                    .unwrap_or(0.0);
-                if have < tuning.gift_cost {
-                    return Err(Rejected("not enough Components to gift"));
-                }
-                *self
-                    .expedition
-                    .cargo
-                    .entry(ResourceKind::Components)
-                    .or_insert(0.0) -= tuning.gift_cost;
+                self.gift_exchange(tuning)?;
                 if let Some(c) = self.expedition.contact.as_mut() {
                     c.disposition += tuning.gift_shift;
                 }
-                self.log.push(
-                    self.tick,
-                    "You set the materials down and step back. A gesture older than language.",
-                    tuning.log_capacity,
-                );
                 Ok(())
             }
             Action::HailAvoid => {
@@ -1047,14 +935,7 @@ impl GameState {
                     return Err(Rejected("already in ship combat"));
                 }
                 let grad = self.system_gradient(world, self.expedition.location);
-                let combat = match contact.kind {
-                    crate::contact::ShipKind::Peer => {
-                        crate::contact::peer_ship_stats(0, grad, &self.ship, tuning)
-                    }
-                    crate::contact::ShipKind::Remnant => {
-                        crate::contact::remnant_ship_stats(0, grad, tuning)
-                    }
-                };
+                let combat = crate::contact::ship_combat(contact.kind, grad, &self.ship, tuning);
                 if let Some(c) = self.expedition.contact.as_mut() {
                     c.combat = Some(combat);
                 }
@@ -1211,5 +1092,56 @@ impl GameState {
                 Ok(())
             }
         }
+    }
+
+    /// Tally a spared Peer and fire the once-only "The Communion Thread" note.
+    /// Shared by the surface `Parley` and ship `HailParley` resolutions.
+    fn record_peer_spared(&mut self, tuning: &Tuning) {
+        self.peers_spared += 1;
+        self.note_once(
+            NoteId::FirstPeerSpared,
+            "The Communion Thread",
+            COMMUNION_THREAD_BODY,
+            tuning,
+        );
+    }
+
+    /// Shared `Trade`/`HailTrade` exchange: spend Components from ship cargo,
+    /// gain Isotopes (with the Curious bonus), emit the trade log line. The
+    /// caller applies its own disposition shift afterwards; emitting the log
+    /// here (before that shift) is unobservable — the log sequence and final
+    /// state are unchanged.
+    fn trade_exchange(&mut self, b: crate::alien::Band, tuning: &Tuning) -> Result<(), Rejected> {
+        if self.cargo_amount(ResourceKind::Components) < tuning.trade_give {
+            return Err(Rejected("not enough Components to trade"));
+        }
+        self.cargo_add(ResourceKind::Components, -tuning.trade_give);
+        let gain = if b == crate::alien::Band::Curious {
+            tuning.trade_get * CURIOUS_TRADE_BONUS
+        } else {
+            tuning.trade_get
+        };
+        self.cargo_add(ResourceKind::Isotopes, gain);
+        self.log.push(
+            self.tick,
+            "You exchange what you have for what they carry. Neither of you speaks.",
+            tuning.log_capacity,
+        );
+        Ok(())
+    }
+
+    /// Shared `Gift`/`HailGift` exchange: spend Components from ship cargo and
+    /// emit the gift log line. Same log-before-shift note as `trade_exchange`.
+    fn gift_exchange(&mut self, tuning: &Tuning) -> Result<(), Rejected> {
+        if self.cargo_amount(ResourceKind::Components) < tuning.gift_cost {
+            return Err(Rejected("not enough Components to gift"));
+        }
+        self.cargo_add(ResourceKind::Components, -tuning.gift_cost);
+        self.log.push(
+            self.tick,
+            "You set the materials down and step back. A gesture older than language.",
+            tuning.log_capacity,
+        );
+        Ok(())
     }
 }

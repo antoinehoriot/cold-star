@@ -39,7 +39,10 @@ mod tick;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use narrative::{ending_note_id, ending_text};
+pub(crate) use narrative::{
+    ANOTHER_VESSEL_BODY, COMMUNION_THREAD_BODY, MIRROR_IN_THE_DARK_BODY, ending_note_id,
+    ending_text,
+};
 
 /// Cumulative scrap salvaged that triggers the heavy-consumption uneasy note.
 const HEAVY_CONSUMPTION_SCRAP: f64 = 500.0;
@@ -447,6 +450,26 @@ impl GameState {
         self.expedition.away_team.crew as f64
             * tuning.marine_hp
             * (1.0 + self.gear.armor_tier as f64 * tuning.armor_hp_step)
+    }
+
+    /// Current amount of `k` in the expedition's ship cargo (0.0 if absent).
+    fn cargo_amount(&self, k: ResourceKind) -> f64 {
+        self.expedition.cargo.get(&k).copied().unwrap_or(0.0)
+    }
+
+    /// Add `v` (may be negative) to `k` in the expedition's ship cargo. Unclamped.
+    fn cargo_add(&mut self, k: ResourceKind, v: f64) {
+        *self.expedition.cargo.entry(k).or_insert(0.0) += v;
+    }
+
+    /// Add to the expedition's ship cargo, clamped to remaining cargo space.
+    /// (Distinct from `satchel_add`, which clamps the surface satchel instead.)
+    fn cargo_add_clamped(&mut self, k: ResourceKind, amt: f64) {
+        let space = (self.ship.cargo - self.expedition.cargo_total()).max(0.0);
+        let take = amt.min(space);
+        if take > 0.0 {
+            self.cargo_add(k, take);
+        }
     }
 
     fn satchel_add(&mut self, k: ResourceKind, amt: f64) {

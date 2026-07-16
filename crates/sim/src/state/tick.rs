@@ -302,11 +302,7 @@ impl GameState {
                         crate::galaxy::SiteKind::Planet(_) => vec![],
                     };
                     for (k, amt) in yields {
-                        let space = (self.ship.cargo - self.expedition.cargo_total()).max(0.0);
-                        let take = amt.min(space);
-                        if take > 0.0 {
-                            *self.expedition.cargo.entry(k).or_insert(0.0) += take;
-                        }
+                        self.cargo_add_clamped(k, amt);
                     }
                     // A Planet is landed on, never quick-resolved — defensively
                     // refuse to mark it depleted even if this arm is somehow reached.
@@ -359,18 +355,9 @@ impl GameState {
         }
         // Away: Rations billing.
         let need = self.expedition.away_team.crew as f64 * tuning.marine_ration_upkeep;
-        let have = self
-            .expedition
-            .cargo
-            .get(&ResourceKind::Rations)
-            .copied()
-            .unwrap_or(0.0);
+        let have = self.cargo_amount(ResourceKind::Rations);
         if have >= need {
-            *self
-                .expedition
-                .cargo
-                .entry(ResourceKind::Rations)
-                .or_insert(0.0) -= need;
+            self.cargo_add(ResourceKind::Rations, -need);
         } else {
             self.expedition.cargo.remove(&ResourceKind::Rations);
             // Starvation.
@@ -400,15 +387,9 @@ impl GameState {
         }
     }
 
-    fn tick_landing(&mut self, world: &World) {
-        let tuning = world.tuning;
-        // Suit drain (always runs first).
-        {
-            let Some(landing) = self.expedition.landing.as_mut() else {
-                return;
-            };
-            landing.suit -= tuning.suit_drain_per_tick;
-        }
+    /// If the suit has run out, abort the landing (satchel lost) and log it.
+    /// Returns whether the retreat fired.
+    fn retreat_if_suit_critical(&mut self, tuning: &Tuning) -> bool {
         if self
             .expedition
             .landing
@@ -421,6 +402,21 @@ impl GameState {
                 "Suit critical. You scramble back empty-handed.",
                 tuning.log_capacity,
             );
+            return true;
+        }
+        false
+    }
+
+    fn tick_landing(&mut self, world: &World) {
+        let tuning = world.tuning;
+        // Suit drain (always runs first).
+        {
+            let Some(landing) = self.expedition.landing.as_mut() else {
+                return;
+            };
+            landing.suit -= tuning.suit_drain_per_tick;
+        }
+        if self.retreat_if_suit_critical(tuning) {
             return;
         }
         // Combat consumes the tick — no traverse while fighting.
@@ -451,19 +447,7 @@ impl GameState {
             };
             self.resolve_node(world, system, site_idx, biome, node);
             // A fatal hazard this tick must force the retreat NOW.
-            if self
-                .expedition
-                .landing
-                .as_ref()
-                .is_some_and(|l| l.suit <= 0.0)
-            {
-                self.expedition.landing = None;
-                self.log.push(
-                    self.tick,
-                    "Suit critical. You scramble back empty-handed.",
-                    tuning.log_capacity,
-                );
-            }
+            self.retreat_if_suit_critical(tuning);
         }
     }
 }
