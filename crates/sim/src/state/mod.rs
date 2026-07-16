@@ -123,6 +123,21 @@ pub enum Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected(pub &'static str);
 
+/// Memoized galaxy, lazily derived from `world_seed` + tuning. Never serialized
+/// (saves regenerate it) and deliberately transparent to `PartialEq`: a filled
+/// cache must not make otherwise-equal states unequal (the determinism tests
+/// compare states across paths that may or may not have touched the galaxy).
+/// Invariant: tuning is constant for the lifetime of a run; anything that
+/// changes galaxy-shaping tuning mid-game must construct a fresh `GameState`.
+#[derive(Debug, Clone, Default)]
+pub struct GalaxyCache(std::cell::OnceCell<Galaxy>);
+
+impl PartialEq for GalaxyCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameState {
     pub version: u32,
@@ -155,6 +170,8 @@ pub struct GameState {
     pub peers_killed: u32,
     pub resolved_contacts: BTreeSet<u32>,
     pub endgame: Option<Endgame>,
+    #[serde(skip)]
+    galaxy_cache: GalaxyCache,
 }
 
 impl GameState {
@@ -206,6 +223,7 @@ impl GameState {
             peers_killed: 0,
             resolved_contacts: BTreeSet::new(),
             endgame: None,
+            galaxy_cache: GalaxyCache::default(),
         };
         if !origin.intro.is_empty() {
             state.log.push(0, origin.intro.clone(), tuning.log_capacity);
@@ -219,6 +237,7 @@ impl GameState {
             world.tuning.galaxy_reveal_radius,
             &mut state.galaxy_state.revealed,
         );
+        let _ = state.galaxy_cache.0.set(galaxy);
         state
     }
 
@@ -226,9 +245,12 @@ impl GameState {
         self.origin.id
     }
 
-    /// Regenerate the (unsaved) galaxy from the world seed.
-    pub fn galaxy(&self, world: &World) -> Galaxy {
-        Galaxy::generate(self.world_seed, world.tuning)
+    /// The (unsaved) galaxy for this run: generated from the world seed on
+    /// first use, memoized afterwards. See [`GalaxyCache`] for the invariants.
+    pub fn galaxy(&self, tuning: &Tuning) -> &Galaxy {
+        self.galaxy_cache
+            .0
+            .get_or_init(|| Galaxy::generate(self.world_seed, tuning))
     }
 
     /// Away = not docked at home, or mid-jump. Station management locks while away.
@@ -316,7 +338,7 @@ impl GameState {
         if !self.away() {
             return false;
         }
-        let galaxy = self.galaxy(world);
+        let galaxy = self.galaxy(world.tuning);
         let Some(here) = galaxy.get(self.expedition.location) else {
             return true;
         };

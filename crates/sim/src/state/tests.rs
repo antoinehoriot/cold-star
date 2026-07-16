@@ -193,7 +193,7 @@ fn sim_home() -> crate::galaxy::SystemId {
 /// Find a revealed, reachable, non-home system for a given seed (drive range
 /// is generous vs reveal radius in defaults, so a revealed neighbor is reachable).
 fn a_reachable_target(s: &GameState, w: &World) -> crate::galaxy::SystemId {
-    let g = s.galaxy(w);
+    let g = s.galaxy(w.tuning);
     let here = g.get(s.expedition.location).unwrap();
     s.galaxy_state
         .revealed
@@ -211,7 +211,7 @@ fn jump_costs_fuel_transits_then_arrives() {
     let mut s = GameState::new(&w, 4);
     s.resources.add(ResourceKind::Fuel, 100.0);
     let target = a_reachable_target(&s, &w);
-    let g = s.galaxy(&w);
+    let g = s.galaxy(w.tuning);
     let dist = crate::galaxy::distance(g.get(crate::galaxy::HOME).unwrap(), g.get(target).unwrap());
     let cost = crate::galaxy::jump_cost(dist, &t);
     let fuel_before = s.resources.amount(ResourceKind::Fuel);
@@ -255,7 +255,10 @@ fn new_game_initializes_m4_state() {
     assert!(!s.away());
     // Home is revealed at the start; the galaxy is regenerable, not stored.
     assert!(s.galaxy_state.revealed.contains(&0));
-    assert_eq!(s.galaxy(&w).systems.len(), t.galaxy_system_count as usize);
+    assert_eq!(
+        s.galaxy(w.tuning).systems.len(),
+        t.galaxy_system_count as usize
+    );
 }
 
 #[test]

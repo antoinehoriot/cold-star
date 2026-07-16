@@ -217,23 +217,19 @@ impl GameState {
             Activity::Transit { to, .. } => {
                 self.expedition.prev_location = self.expedition.location;
                 self.expedition.location = to;
-                let galaxy = self.galaxy(world);
-                reveal_from(
-                    &galaxy,
-                    to,
-                    tuning.galaxy_reveal_radius,
-                    &mut self.galaxy_state.revealed,
-                );
+                // Take `revealed` out while the memoized galaxy borrows `self`.
+                let mut revealed = std::mem::take(&mut self.galaxy_state.revealed);
+                let star_type = {
+                    let galaxy = self.galaxy(world.tuning);
+                    reveal_from(galaxy, to, tuning.galaxy_reveal_radius, &mut revealed);
+                    galaxy.get(to).map(|sys| sys.star_type)
+                };
+                self.galaxy_state.revealed = revealed;
                 if let std::collections::btree_map::Entry::Vacant(e) =
                     self.galaxy_state.sites.entry(to.0)
-                    && let Some(sys) = galaxy.get(to)
+                    && let Some(star_type) = star_type
                 {
-                    e.insert(materialize_sites(
-                        self.world_seed,
-                        to.0,
-                        sys.star_type,
-                        tuning,
-                    ));
+                    e.insert(materialize_sites(self.world_seed, to.0, star_type, tuning));
                 }
                 if to == HOME && !self.expedition.cargo.is_empty() {
                     for (k, amt) in std::mem::take(&mut self.expedition.cargo) {
@@ -259,15 +255,18 @@ impl GameState {
             }
             Activity::Scan { target, .. } => {
                 self.galaxy_state.scanned.insert(target.0);
-                let galaxy = self.galaxy(world);
+                let star_type = self
+                    .galaxy(world.tuning)
+                    .get(target)
+                    .map(|sys| sys.star_type);
                 if let std::collections::btree_map::Entry::Vacant(e) =
                     self.galaxy_state.sites.entry(target.0)
-                    && let Some(sys) = galaxy.get(target)
+                    && let Some(star_type) = star_type
                 {
                     e.insert(materialize_sites(
                         self.world_seed,
                         target.0,
-                        sys.star_type,
+                        star_type,
                         tuning,
                     ));
                 }

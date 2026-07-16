@@ -58,6 +58,12 @@ fn decode_with_limit(s: &str, max_decompressed: usize) -> Result<GameState, Save
 
 /// Migration seam: dispatch on the on-disk schema version. Future versions add
 /// arms that read their own layout and upgrade to the current `GameState`.
+///
+/// POLICY (recorded 2026-07-16): pre-1.0, older versions are rejected rather
+/// than migrated — every `SAVE_VERSION` bump deliberately orphans existing
+/// saves and shared links (players restart; the game is short). Re-open this
+/// once the game has a stable release or a real player base: at that point a
+/// bump without a migration arm here is a bug, not a policy.
 fn migrate(
     version: u32,
     compressed: &[u8],

@@ -313,7 +313,7 @@ impl GameState {
                 if !self.galaxy_state.revealed.contains(&target.0) {
                     return Err(Rejected("that system is not on the map"));
                 }
-                let galaxy = self.galaxy(world);
+                let galaxy = self.galaxy(world.tuning);
                 let (Some(here), Some(dest)) =
                     (galaxy.get(self.expedition.location), galaxy.get(target))
                 else {
@@ -1111,7 +1111,7 @@ impl GameState {
                 }
                 let here = self.expedition.location;
                 let prev = self.expedition.prev_location;
-                let galaxy = self.galaxy(world);
+                let galaxy = self.galaxy(world.tuning);
                 let cost = match (galaxy.get(here), galaxy.get(prev)) {
                     (Some(h), Some(p)) => jump_cost(distance(h, p), tuning),
                     _ => jump_cost(1.0, tuning), // fallback: minimum cost

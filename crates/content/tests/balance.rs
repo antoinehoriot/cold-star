@@ -296,7 +296,7 @@ fn m4_travel_loop_brings_isotopes_home() {
     s.resources.add(ResourceKind::Fuel, 100.0);
 
     // Pick a revealed, reachable neighbor and scan it.
-    let galaxy = s.galaxy(&w);
+    let galaxy = s.galaxy(w.tuning);
     let here = galaxy.get(s.expedition.location).unwrap();
     let target = s
         .galaxy_state

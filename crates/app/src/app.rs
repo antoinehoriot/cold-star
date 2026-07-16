@@ -32,16 +32,31 @@ const REPO_URL: &str = "https://github.com/antoinehoriot/cold-star";
 
 #[component]
 pub fn App() -> Element {
-    let tuning = use_signal(|| content::load().unwrap_or_else(|_| Tuning::default()));
-    let jobs = use_signal(|| content::load_jobs().map(|r| r.0).unwrap_or_default());
-    let modules = use_signal(|| content::load_modules().map(|r| r.0).unwrap_or_default());
-    let techs = use_signal(|| content::load_techs().map(|r| r.0).unwrap_or_default());
-    let origins = use_signal(|| content::load_origins().unwrap_or_default());
+    // Content is embedded at compile time: a load failure is a build defect, and
+    // must panic loudly (surfaced by the console panic hook) rather than launch
+    // a silently empty game with default tuning and no modules or origins.
+    let tuning = use_signal(|| content::load().expect("embedded tuning must be valid"));
+    let jobs = use_signal(|| {
+        content::load_jobs()
+            .map(|r| r.0)
+            .expect("embedded jobs must be valid")
+    });
+    let modules = use_signal(|| {
+        content::load_modules()
+            .map(|r| r.0)
+            .expect("embedded modules must be valid")
+    });
+    let techs = use_signal(|| {
+        content::load_techs()
+            .map(|r| r.0)
+            .expect("embedded techs must be valid")
+    });
+    let origins = use_signal(|| content::load_origins().expect("embedded origins must be valid"));
     let state = use_signal(|| {
         crate::persist::load_initial(&tuning.read(), &jobs.read(), &modules.read(), &techs.read())
     });
 
-    crate::tick::use_tick_driver(state, tuning, jobs, modules, techs, 1000.0, 8 * 60 * 60);
+    crate::tick::use_tick_driver(state, tuning, jobs, modules, techs);
 
     let has_game = state.read().is_some();
     let mut legal = use_signal(|| Option::<&'static str>::None);
@@ -342,7 +357,7 @@ fn Console(
             modules: &m,
             techs: &tc,
         };
-        let galaxy = gs.galaxy(&world);
+        let galaxy = gs.galaxy(world.tuning);
         let here = galaxy.get(loc).cloned();
         let mut rows: Vec<NavRow> = Vec::new();
         for &sid in gs.galaxy_state.revealed.iter() {
@@ -592,11 +607,10 @@ fn Console(
             .get(&ResourceKind::Components)
             .copied()
             .unwrap_or(0.0);
-        // flee cost = jump_cost(distance(here, prev_location)). Galaxy needs only seed + tuning
-        // (no full World): `Galaxy::generate(gs.world_seed, tn)`. Reuse an in-scope galaxy binding
-        // if Console already built one for the nav rows.
+        // flee cost = jump_cost(distance(here, prev_location)). The galaxy is
+        // memoized on GameState, so this lookup is cheap per render.
         let flee_cost = {
-            let g = sim::galaxy::Galaxy::generate(gs.world_seed, &tn);
+            let g = gs.galaxy(&tn);
             match (
                 g.get(gs.expedition.location),
                 g.get(gs.expedition.prev_location),

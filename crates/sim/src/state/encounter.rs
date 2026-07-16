@@ -69,7 +69,7 @@ impl GameState {
     /// Home-distance reward gradient: 1.0 at home, higher the farther `system` is.
     pub(crate) fn system_gradient(&self, world: &World, system: SystemId) -> f64 {
         let tuning = world.tuning;
-        let galaxy = self.galaxy(world);
+        let galaxy = self.galaxy(world.tuning);
         match (galaxy.get(HOME), galaxy.get(system)) {
             (Some(h), Some(s)) => 1.0 + distance(h, s) * tuning.reward_gradient,
             _ => 1.0,
