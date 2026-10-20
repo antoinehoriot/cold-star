@@ -4,6 +4,8 @@ A minimalist sci-fi incremental game about a small light in a very large dark â€
 and the cost of keeping it lit. Built in Rust, runs in the browser via
 WebAssembly.
 
+**[â–¶ Play it in your browser](https://antoinehoriot.github.io/cold-star/)** (no install, saves locally)
+
 > You wake a dying reactor in a dead station. You survive by gathering, then by
 > building, then by reaching out across the stars. The interface tells the story:
 > it begins as a cold console you coax to life, and it changes as you do.
@@ -36,6 +38,9 @@ balance, encounters, and polish are all welcome (see
 [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Play it locally
+
+The hosted build at <https://antoinehoriot.github.io/cold-star/> is deployed
+from `main` by `.github/workflows/pages.yml`. To run it yourself:
 
 You need [Rust](https://rustup.rs/) (stable, edition 2024) and the
 [Dioxus CLI](https://dioxuslabs.com/) for the web build:
